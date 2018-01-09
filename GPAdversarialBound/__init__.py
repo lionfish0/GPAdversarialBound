@@ -359,8 +359,12 @@ def getshiftbounds(X,Y,l=2000.0,totalits=100,earlystop=0.0,valmin=0.0,valmax=1.0
         print("Computing...")
         client = Client(ip+':8786')
         results = compute(*tocompute, get=client.get)
-
-        print(results)
+        
+        allshifts = []
+        debuginfo = []
+        for res in results:
+            allshifts.append(res[1])
+            debuginfo.append(res[0])
     return allshifts,debuginfo
     
 def plot2dB(B):
