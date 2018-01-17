@@ -216,7 +216,7 @@ def getmaxshift(B,peakgrads,graddim):
     """
     B=np.array(B)
     peakgrads = np.array(peakgrads)[:,:,0]
-    seglist = sumovercuboids(B,peakgrads,0)
+    seglist = sumovercuboids(B,peakgrads,graddim)
     maxint = 0
     for s in seglist:
         maxint = max(maxint,s['int'])
@@ -237,6 +237,8 @@ def randomargmax(x):
      index of largest value.
     """
     return np.random.choice(np.where(x==np.max(x))[0])
+    #tempx = (x*1.0)+np.random.rand(x.shape[0],x.shape[1])*0.01 #add tiny bit of randomness to the numbers!
+    #return np.where(tempx==np.max(tempx))[0][0]
 
 def getshiftboundsfordim(graddim,X,Y,l,totalits,earlystop,valmin,valmax):
     """
@@ -248,7 +250,7 @@ def getshiftboundsfordim(graddim,X,Y,l,totalits,earlystop,valmin,valmax):
 
     for it in range(totalits):
         #loop through all the boxes, and compute any that aren't yet computed (check if 'computed')
-        for i in range(len(B)):
+        for i in np.random.permutation(range(len(B))):
             if peakgrads[i] is np.NaN:
                 peakgrad, peaklocs, peakvals = compute_box_bound(B[i],X,Y,l,graddim)            
                 peakgrads[i] = peakgrad
@@ -261,7 +263,7 @@ def getshiftboundsfordim(graddim,X,Y,l,totalits,earlystop,valmin,valmax):
             break
 
         #pick box with max gradient bound
-        #maxbox = np.argmax(np.array(peakgrads))
+        #maxbox = randomargmax(np.array(peakgrads))
 
         #pick box with max gradient*width bound
         widths = np.array([np.diff(b[0]) for b in B])
@@ -273,7 +275,8 @@ def getshiftboundsfordim(graddim,X,Y,l,totalits,earlystop,valmin,valmax):
         peakgrads.pop(maxbox)
 
         #decide on which way we're going to halve the box (we want the longest dimension)
-        dimtosplit = np.argmax(np.diff(b))
+        #dimtosplit = np.argmax(np.diff(b))
+        dimtosplit = randomargmax(np.diff(b))
         mid = (b[dimtosplit][0]+b[dimtosplit][1])/2 #the midpoint of this dimension
 
         #find the start and end coordinates of the two new boxes
@@ -300,7 +303,7 @@ def getshiftbounds(X,Y,l=2000.0,totalits=100,earlystop=0.0,valmin=0.0,valmax=1.0
     """
     This iterates over all the inputs in X. For each it slices up the space
     in a 'recursive' binary way, picking on those regions with the greatest
-    POSITIV integral over their volume. The result is an upper bound for
+    POSITIVE integral over their volume. The result is an upper bound for
     the change in the prediction as one moves along each of the inputs
     (from 0 to 1).
     
@@ -350,7 +353,6 @@ def getshiftbounds(X,Y,l=2000.0,totalits=100,earlystop=0.0,valmin=0.0,valmax=1.0
             allshifts.append(shift)
         
     else:
-        
         tocompute = [np.NaN]*X.shape[1]
         for graddim in range(X.shape[1]):
             tocompute[graddim] = delayed(getshiftboundsfordim,pure=True)(graddim,X,Y,l,totalits,earlystop,valmin,valmax)
