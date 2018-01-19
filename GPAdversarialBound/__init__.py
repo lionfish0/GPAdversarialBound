@@ -402,7 +402,6 @@ def getshiftbounds(X,Y,l=2000.0,totalits=100,earlystop=0.0,valmin=0.0,valmax=1.0
     
     if ip is None:
         for graddim in range(X.shape[1]):
-            print(".",end="")
             debug, shift = getshiftboundsfordim(graddim,X,Y,l,totalits,earlystop,valmin,valmax)
             debuginfo.append(debug)
             allshifts.append(shift)
