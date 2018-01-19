@@ -2,12 +2,21 @@ import numpy as np
 from hypercuboid_integrator import sumovercuboids
 import matplotlib.pyplot as plt
 
+#def k(X,Xprime,l):
+#    """Full kernel. Get covariance (using RBF with lengthscale l) between x and xprime"""
+#    res = np.empty([X.shape[0],Xprime.shape[0]])
+#    for i,x in enumerate(X):
+#        for j,xprime in enumerate(Xprime):
+#            res[i,j] = np.exp(-.5*np.dot((x-xprime),(x-xprime).T)/(l**2))
+#    return res
+
+#bit faster?
 def k(X,Xprime,l):
     """Full kernel. Get covariance (using RBF with lengthscale l) between x and xprime"""
-    res = np.zeros([X.shape[0],Xprime.shape[0]])
-    for i,x in enumerate(X):
-        for j,xprime in enumerate(Xprime):
-            res[i,j] = np.exp(-.5*np.dot((x-xprime),(x-xprime).T)/(l**2))
+    res = np.empty([X.shape[0],Xprime.shape[0]])
+    for i,xprime in enumerate(Xprime):
+        res[:,i] = -0.5*np.sum((X - xprime)**2,1)/(l**2)
+    res = np.exp(res)
     return res
 
 def computeAlpha(X,Y,l):
@@ -26,7 +35,36 @@ def computeAlpha(X,Y,l):
     NOTE: For now we assume \sigma^2 = 1.
     """
     return np.dot(np.linalg.inv(k(X,X,l)+np.eye(len(X))),Y)
-    
+
+#slower...
+#def getpred2grad(Xtest,X,Y,dim,l,alpha=None):
+#    """
+#    Get the gradient at Xtest, wrt Xtest_dim
+#
+#    Parameters:
+#        X = training inputs
+#        Y = training outputs
+#        dim = dimension that's being differentiated.
+#        l = lengthscale
+#        alpha = alpha values.
+#    Returns: gradient of the predictions.
+#    """
+#    assert len(Xtest.shape)==2
+#    assert Xtest.shape[1]==X.shape[1]
+#    assert X.shape[0]==Y.shape[0]
+#    assert dim<Xtest.shape[1]
+#    assert dim>=0
+#    assert l>=0
+#    rets = []
+#    for xtest in Xtest:
+#        pred = 0
+#        K = k(xtest[None,:],X,l)
+#        for i,(a,kval) in enumerate(zip(alpha,K.T)):
+#            pred+=a*kval*((X[i,dim]-xtest[dim])/(l**2))
+#        rets.append(pred)
+#    return np.array(rets)
+
+#fast version!
 def getpred2grad(Xtest,X,Y,dim,l,alpha=None):
     """
     Get the gradient at Xtest, wrt Xtest_dim
@@ -39,19 +77,32 @@ def getpred2grad(Xtest,X,Y,dim,l,alpha=None):
         alpha = alpha values.
     Returns: gradient of the predictions.
     """
-    assert len(Xtest.shape)==2
-    assert Xtest.shape[1]==X.shape[1]
-    assert X.shape[0]==Y.shape[0]
-    assert dim<Xtest.shape[1]
-    assert dim>=0
-    assert l>=0
     rets = []
-    for xtest in Xtest:
+    allK = k(Xtest,X,l)
+    for xtest,K in zip(Xtest,allK):
         pred = 0
-        K = k(xtest[None,:],X,l)
-        for i,(a,kval) in enumerate(zip(alpha,K.T)):
+        #oldK = k(xtest[None,:],X,l)
+        for i,(a,kval) in enumerate(zip(alpha,K[None,:].T)):
             pred+=a*kval*((X[i,dim]-xtest[dim])/(l**2))
         rets.append(pred)
+    return np.array(rets)
+
+def getpred2grad_onetrainingpoint(Xtest,X,Y,dim,l,alpha=None):
+    """
+    Get the gradient at Xtest, wrt Xtest_dim
+
+    Parameters:
+        X = training inputs
+        Y = training outputs
+        dim = dimension that's being differentiated.
+        l = lengthscale
+        alpha = alpha values.
+    Returns: gradient of the predictions.
+    """
+    rets = []
+    allK = k(Xtest,X,l)
+    for xtest,K in zip(Xtest,allK):
+        rets.append(alpha[0]*K*((X[0,dim]-xtest[dim])/(l**2)))
     return np.array(rets)
 
 def getpred(Xtest,X,Y,l):
@@ -70,8 +121,8 @@ def getpred(Xtest,X,Y,l):
     assert l>=0
 
     rets = []
+    alpha = np.dot(np.linalg.inv(k(X,X,l)+np.eye(len(X))),Y)
     for xtest in Xtest:
-        alpha = np.dot(np.linalg.inv(k(X,X,l)+np.eye(len(X))),Y)
         pred = 0
         K = k(xtest[None,:],X,l)  
         for i,(a,kval) in enumerate(zip(alpha,K.T)):
@@ -116,19 +167,19 @@ def compute_box_bound(b,X,Y,l,dim):
         testx[0,dim] = x[0,dim]-(l)*np.sign(y[0,0])
         
         
-        ####Test code to confirm this is a gradient peak####
-        testxdelta = testx.copy()
-        delta = 0.01
-        testxdelta[0,dim]+=delta
-        #rather than use gradient - we'll just check neighbouring locations have lower gradient
-        #assert np.abs((getpred2grad(testx,x,y,dim,l,alpha=a)-getpred2grad(testxdelta,x,y,dim,l,alpha=a))/delta)<0.01, \
-        #    "Error %0.6f should be zero (dim=%d)" % ((getpred2grad(testx,x,y,dim,l,alpha=a)-getpred2grad(testxdelta,x,y,dim,l,alpha=a))/delta,dim)
-        assert getpred2grad(testx,x,y,dim,l,alpha=a)>=getpred2grad(testxdelta,x,y,dim,l,alpha=a)-1e-10
-        testxdelta = testx.copy()
-        delta = 0.001
-        testxdelta[0,dim]-=delta
-        assert getpred2grad(testx,x,y,dim,l,alpha=a)>=getpred2grad(testxdelta,x,y,dim,l,alpha=a)-1e-10 #for reasons of numerical stability this sometimes needs a bit of help
-        ####################################################
+#        ####Test code to confirm this is a gradient peak####
+#        testxdelta = testx.copy()
+#        delta = 0.01
+#        testxdelta[0,dim]+=delta
+#        #rather than use gradient - we'll just check neighbouring locations have lower gradient
+#        #assert np.abs((getpred2grad(testx,x,y,dim,l,alpha=a)-getpred2grad(testxdelta,x,y,dim,l,alpha=a))/delta)<0.01, \
+#        #    "Error %0.6f should be zero (dim=%d)" % ((getpred2grad(testx,x,y,dim,l,alpha=a)-getpred2grad(testxdelta,x,y,dim,l,alpha=a))/delta,dim)
+#        assert getpred2grad(testx,x,y,dim,l,alpha=a)>=getpred2grad(testxdelta,x,y,dim,l,alpha=a)-1e-10
+#        testxdelta = testx.copy()
+#        delta = 0.001
+#        testxdelta[0,dim]-=delta
+#        assert getpred2grad(testx,x,y,dim,l,alpha=a)>=getpred2grad(testxdelta,x,y,dim,l,alpha=a)-1e-10 #for reasons of numerical stability this sometimes needs a bit of help
+#        ####################################################
         
         #this is to store the location of the peak inside the boundary
         boundarymaxpeak = np.ones_like(testx)*np.NaN 
@@ -138,14 +189,16 @@ def compute_box_bound(b,X,Y,l,dim):
         if (testx[0,dim]>b[dim][0]) & (testx[0,dim]<b[dim][1]):
             #the peak of the derivative-rbf in the differentiated axis is inside the boundary.
             boundarymaxpeak[0,dim] = testx[0,dim] #we can set this as the location of the maximum
-            maxgrad = getpred2grad(testx,x,y,dim,l,alpha=a) #get the value of the actual peak
+            #maxgrad = getpred2grad(testx,x,y,dim,l,alpha=a) #get the value of the actual peak
+            maxgrad = getpred2grad_onetrainingpoint(testx,x,y,dim,l,alpha=a)
         else:            
             #the peak is outside the boundary, check at which boundary is most positive.
             #todo this could be done without actually computing the values (just look which is closer!!)
             testpoints = np.r_[testx.copy(),testx.copy()]
             testpoints[0,dim]=b[dim][0]
             testpoints[1,dim]=b[dim][1]
-            boundaryedges = getpred2grad(testpoints,x,y,dim,l,alpha=a)
+            #boundaryedges = getpred2grad(testpoints,x,y,dim,l,alpha=a)
+            boundaryedges = getpred2grad_onetrainingpoint(testpoints,x,y,dim,l,alpha=a)
             maxgrad = np.max(boundaryedges) #saves the value of the peak, it might be negative!
             boundarymaxpeak[0,dim] = testpoints[np.argmax(boundaryedges),dim]
             
@@ -176,12 +229,14 @@ def compute_box_bound(b,X,Y,l,dim):
             testpoints[0,d]=b[d][0]
             testpoints[1,d]=b[d][1]
             testpoints[:,dim] = boundarymaxpeak[0,dim]
-            boundaryedges = getpred2grad(testpoints,x,y,dim,l,alpha=a)
+            #boundaryedges = getpred2grad(testpoints,x,y,dim,l,alpha=a)
+            boundaryedges = getpred2grad_onetrainingpoint(testpoints,x,y,dim,l,alpha=a)
             #...and sets the appropriate coordinate of 'boundarymaxpeak' to the boundary with the
             #most positive value
             boundarymaxpeak[0,d] = testpoints[np.argmax(boundaryedges),d]
             
         peakval = getpred2grad(boundarymaxpeak,x,y,dim,l,alpha=a)
+        peakval = boundaryedges = getpred2grad_onetrainingpoint(boundarymaxpeak,x,y,dim,l,alpha=a)
         peakgrad += peakval
         peaklocs.append(boundarymaxpeak)
         peakvals.append(peakval)
@@ -247,7 +302,6 @@ def getshiftboundsfordim(graddim,X,Y,l,totalits,earlystop,valmin,valmax):
     """
     B = [np.repeat(np.array([[valmin,valmax]]),X.shape[1],0)]
     peakgrads =[np.NaN]*len(B)
-
     for it in range(totalits):
         #loop through all the boxes, and compute any that aren't yet computed (check if 'computed')
         for i in np.random.permutation(range(len(B))):
