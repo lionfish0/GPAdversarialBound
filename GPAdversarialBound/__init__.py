@@ -1,6 +1,7 @@
 import numpy as np
 from hypercuboid_integrator import sumovercuboids
 import matplotlib.pyplot as plt
+#from numba import jit
 
 #def k(X,Xprime,l):
 #    """Full kernel. Get covariance (using RBF with lengthscale l) between x and xprime"""
@@ -11,11 +12,12 @@ import matplotlib.pyplot as plt
 #    return res
 
 #bit faster?
+
 def k(X,Xprime,l):
-    """Full kernel. Get covariance (using RBF with lengthscale l) between x and xprime"""
+    """Full kernel. Get covariance (using RBF with lengthscale list l) between x and xprime"""
     res = np.empty([X.shape[0],Xprime.shape[0]])
     for i,xprime in enumerate(Xprime):
-        res[:,i] = -0.5*np.sum((X - xprime)**2,1)/(l**2)
+        res[:,i] = -0.5*np.sum(((X - xprime)/l)**2,1)
     res = np.exp(res)
     return res
 
@@ -87,6 +89,7 @@ def getpred2grad(Xtest,X,Y,dim,l,alpha=None):
         rets.append(pred)
     return np.array(rets)
 
+
 def getpred2grad_onetrainingpoint(Xtest,X,Y,dim,l,alpha=None):
     """
     Get the gradient at Xtest, wrt Xtest_dim
@@ -105,6 +108,7 @@ def getpred2grad_onetrainingpoint(Xtest,X,Y,dim,l,alpha=None):
         rets.append(alpha[0]*K*((X[0,dim]-xtest[dim])/(l**2)))
     return np.array(rets)
 
+
 def getpred(Xtest,X,Y,l):
     """Get the prediction at Xtest
     Parameters:
@@ -118,7 +122,8 @@ def getpred(Xtest,X,Y,l):
     assert len(Xtest.shape)==2
     assert Xtest.shape[1]==X.shape[1]
     assert X.shape[0]==Y.shape[0]
-    assert l>=0
+    if not isinstance(l,list):
+        l = [l]*X.shape[1]
 
     rets = []
     alpha = np.dot(np.linalg.inv(k(X,X,l)+np.eye(len(X))),Y)
@@ -242,7 +247,6 @@ def compute_box_bound(b,X,Y,l,dim):
         peakvals.append(peakval)
     return peakgrad, peaklocs, peakvals
 
-
 def getmaxshift(B,peakgrads,graddim):
     """
     Given the space is sliced into segments described in B, and those segments
@@ -273,7 +277,10 @@ def getmaxshift(B,peakgrads,graddim):
     peakgrads = np.array(peakgrads)[:,:,0]
     seglist = sumovercuboids(B,peakgrads,graddim)
     maxint = 0
-    for s in seglist:
+    #print("Get max shift computation")
+    for it, s in enumerate(seglist):
+        if ((it%100)==50):
+            print("(%d/%d)" % (it,len(seglist)))
         maxint = max(maxint,s['int'])
     return maxint
 
@@ -291,18 +298,28 @@ def randomargmax(x):
     Returns:
      index of largest value.
     """
-    return np.random.choice(np.where(x==np.max(x))[0])
-    #tempx = (x*1.0)+np.random.rand(x.shape[0],x.shape[1])*0.01 #add tiny bit of randomness to the numbers!
-    #return np.where(tempx==np.max(tempx))[0][0]
+    #return np.random.choice(np.where(x==np.max(x))[0])
+    tempx = (x*1.0)+np.random.rand(x.shape[0],x.shape[1])*0.00000001 #add tiny bit of randomness to the numbers!
+    return np.where(tempx==np.max(tempx))[0][0]
 
 def getshiftboundsfordim(graddim,X,Y,l,totalits,earlystop,valmin,valmax):
     """
     Finds largest change in the prediction for a change in a given dimension.
     See getshiftbounds for parameters.
     """
-    B = [np.repeat(np.array([[valmin,valmax]]),X.shape[1],0)]
+    
+    if not isinstance(valmin,list):
+        valmin = [valmin] * X.shape[1]
+    if not isinstance(valmax,list):
+        valmax = [valmax] * X.shape[1]
+    B = [np.array([[a,b] for a,b in  zip(valmin,valmax)])]
+    
+    
+    
     peakgrads =[np.NaN]*len(B)
     for it in range(totalits):
+        if (it%100 == 50):
+            print("(%d/%d)" % (it,totalits))
         #loop through all the boxes, and compute any that aren't yet computed (check if 'computed')
         for i in np.random.permutation(range(len(B))):
             if peakgrads[i] is np.NaN:
@@ -318,9 +335,11 @@ def getshiftboundsfordim(graddim,X,Y,l,totalits,earlystop,valmin,valmax):
 
         #pick box with max gradient bound
         #maxbox = randomargmax(np.array(peakgrads))
-
         #pick box with max gradient*width bound
+        
         widths = np.array([np.diff(b[graddim]) for b in B])
+        #print(np.array(peakgrads)[:,:,0])
+        #print(np.array(peakgrads)[:,:,0]*widths)
         maxbox = randomargmax(np.array(peakgrads)[:,:,0]*widths) #np.argmax(np.array(peakgrads)[:,:,0]*widths)
 
         b = B[maxbox].copy()
@@ -353,7 +372,8 @@ def getshiftboundsfordim(graddim,X,Y,l,totalits,earlystop,valmin,valmax):
 
 from dask import compute, delayed
 from dask.distributed import Client
-def getshiftbounds(X,Y,l=2000.0,totalits=100,earlystop=0.0,valmin=0.0,valmax=1.0,ip=None):
+#@jit
+def getshiftbounds(X,Y,l=2000.0,totalits=100,earlystop=0.0,valmin=0.0,valmax=1.0,dimensions=None,ip=None):
     """
     This iterates over all the inputs in X. For each it slices up the space
     in a 'recursive' binary way, picking on those regions with the greatest
@@ -373,7 +393,9 @@ def getshiftbounds(X,Y,l=2000.0,totalits=100,earlystop=0.0,valmin=0.0,valmax=1.0
         (default 0)
     valmin, valmax = minimum and maximum of the input values (e.g. 0 and 255)
         (default 0 and 1)
-        
+    dimension = list of dimensions to get the bounds for, e.g. [10,11]. Defaults all of them.
+    
+    
     Returns:
         allshifts = bound on the largest *increase* in the prediction value
           for each dimension.
@@ -400,16 +422,16 @@ def getshiftbounds(X,Y,l=2000.0,totalits=100,earlystop=0.0,valmin=0.0,valmax=1.0
     allshifts = []
     debuginfo = []
     
+    if dimensions is None:
+        dimensions = np.arange(X.shape[1])
     if ip is None:
-        for graddim in range(X.shape[1]):
+        for graddim in dimensions:
             debug, shift = getshiftboundsfordim(graddim,X,Y,l,totalits,earlystop,valmin,valmax)
             debuginfo.append(debug)
-            allshifts.append(shift)
-        print("")
-        
+            allshifts.append(shift)        
     else:
         tocompute = [np.NaN]*X.shape[1]
-        for graddim in range(X.shape[1]):
+        for graddim in dimensions:
             tocompute[graddim] = delayed(getshiftboundsfordim,pure=True)(graddim,X,Y,l,totalits,earlystop,valmin,valmax)
         #debuginfo.append(debug)
         #allshifts.append(shift)
@@ -423,7 +445,7 @@ def getshiftbounds(X,Y,l=2000.0,totalits=100,earlystop=0.0,valmin=0.0,valmax=1.0
             allshifts.append(res[1])
             debuginfo.append(res[0])
     return allshifts,debuginfo
-    
+
 def plot2dB(B):
     """
     Helper function to plot a *2d* set of boxes.
