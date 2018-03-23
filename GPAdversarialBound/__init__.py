@@ -177,19 +177,19 @@ def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,change,gridspacing=0.1
     
     
     
-    #print("Dimensionality: %d" % EQcentres.shape[1])
-    if EQcentres.shape[1]>3 and not fulldim:
-        print("Compacting to 3d manifold...")
-        lowd = 3
-        lowdX,evals,evecs,means = PCA(EQcentres.copy(),lowd)
-        ignorenegatives = True
-        print("NEED TO COMPUTE NEW LOCATIONS OF START AND END OF GRID IN LOW DIM MANIFOLD")
-        raise NotImplementedError
-    else:
-        lowdX = EQcentres_not_d
-        lowd = EQcentres_not_d.shape[1]
-        #print("Keeping current dimensionality (%d)" % lowd)
-        ignorenegatives = False
+#    #print("Dimensionality: %d" % EQcentres.shape[1])
+#    if EQcentres.shape[1]>3 and not fulldim:
+#        print("Compacting to 3d manifold...")
+#        lowd = 3
+#        lowdX,evals,evecs,means = PCA(EQcentres_not_d.copy(),lowd)
+#        ignorenegatives = True
+#        print("NEED TO COMPUTE NEW LOCATIONS OF START AND END OF GRID IN LOW DIM MANIFOLD")
+#        raise NotImplementedError
+#    else:
+#        lowdX = EQcentres_not_d
+#        lowd = EQcentres_not_d.shape[1]
+#        #print("Keeping current dimensionality (%d)" % lowd)
+#        ignorenegatives = False
         
     #print("finding bound...")
     #print("Input Locations")
@@ -207,7 +207,7 @@ def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,change,gridspacing=0.1
     #print("ignorenegatives:")
     #print(ignorenegatives)
     
-    return findbound(lowdX,change,ls=ls,d=lowd,gridspacing=gridspacing,gridstart=hc_start_not_d-gridspacing,gridend=hc_end_not_d+gridspacing,ignorenegatives=ignorenegatives)
+    return findbound(EQcentres_not_d,change,ls=ls,d=EQcentres_not_d.shape[1],gridspacing=gridspacing,gridstart=hc_start_not_d-gridspacing,gridend=hc_end_not_d+gridspacing,fulldim=fulldim)
     #return findbound(EQcentres_not_d,change,ls,EQcentres_not_d.shape[1],gridspacing,hc_start_not_d,hc_end_not_d,ignorenegatives=False)
 
 
@@ -232,7 +232,7 @@ def compute_full_bound(EQcentres,EQweights,ls,diff_dim,dims,cubesize,splitcount=
     forwardpaths = [[1],[]]
     backwardpaths = [[],[0]]
 
-
+    print("Splitting...")
     innerchanges = None
     #split up the hypercubes a bit (need to make this more intelligent)
     for splitit in range(splitcount):
@@ -241,13 +241,13 @@ def compute_full_bound(EQcentres,EQweights,ls,diff_dim,dims,cubesize,splitcount=
             split_index = np.argmax(np.sum(np.abs(innerchanges),1))
         split_dim = np.argmax(hypercube_ends[split_index]-hypercube_starts[split_index])
         splitcubes(hypercube_starts,hypercube_ends,forwardpaths,backwardpaths,split_index,split_dim,diff_dim)
-
         startchanges, midchanges, endchanges, innerchanges = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,diff_dim,ls)
 
     #get all the straightline paths (in the direction we're differentiating) from the start and end of the hypercube
     #e.g. hypercube 0->1->3 and 0->2
     paths = getallpaths(forwardpaths)
 
+    print("Computing Paths...")
     #get all the segments, e.g. 0,1,3,0->1,0->1->3,1->3,0,2,0->2
     pathsegments = []
     for p in paths:
@@ -263,7 +263,9 @@ def compute_full_bound(EQcentres,EQweights,ls,diff_dim,dims,cubesize,splitcount=
     #print(startchanges, midchanges, endchanges, innerchanges)
     #check all these path segments, get the maximum value for each.
     maxval = -np.inf
-    for seg in unique_pathsegments:
+    print("Checking Segments...")
+    for it,seg in enumerate(unique_pathsegments):
+        print("\n%d/%d" % (it,len(unique_pathsegments)),end="")
         #print("------")
         #print(seg)
         if len(seg)==1:
@@ -277,6 +279,7 @@ def compute_full_bound(EQcentres,EQweights,ls,diff_dim,dims,cubesize,splitcount=
             search_hypercube_start = np.full_like(hypercube_starts[0],-np.inf)
             search_hypercube_end = np.full_like(hypercube_ends[0],np.inf)
             for s in seg:
+                print(".",end="")
                 search_hypercube_start = np.max(np.array([search_hypercube_start,hypercube_starts[s]]),0)
                 search_hypercube_end = np.min(np.array([search_hypercube_end,hypercube_ends[s]]),0)
             if np.all(search_hypercube_start>=search_hypercube_end):
