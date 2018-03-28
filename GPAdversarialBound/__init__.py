@@ -99,6 +99,9 @@ def splitcubes(hypercube_starts,hypercube_ends,forwardpaths,backwardpaths,splitc
     assert len(forwardpaths)==len(backwardpaths)
     assert len(forwardpaths)==len(hypercube_starts)
     assert len(forwardpaths)==len(hypercube_ends)
+#    for s,e in zip(hypercube_starts[1:],hypercube_ends[1:]):
+#        assert np.all(e>s)
+
 
 def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls):
     #get the highest and lowest values of an EQ between the start and end, along dimension d
@@ -146,20 +149,47 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls):
     midchanges = []
     endchanges = []
     innerchanges = []
+    wholecubechanges = []
+    wholecubecount = []
     for hypercube_start, hypercube_end in zip(hypercube_starts,hypercube_ends):
         startchange, midchange, endchange, innerchange = getchanges(EQcentres,EQweights,hypercube_start,hypercube_end,d,ls)
         startchanges.append(startchange)
         midchanges.append(midchange)
         endchanges.append(endchange)
         innerchanges.append(innerchange)
+        
+        
+        #remove axis we differentiated along
+        EQpeak = np.delete(EQcentres,d,1)
+        EQpeak_incube = EQpeak.copy()
+        s = np.delete(hypercube_start,d)
+        e = np.delete(hypercube_end,d)
+        
+        #where is the nearest point to a maximum?
+        part = (EQpeak - (s+e)/2)
+
+        for i in range(len(s)):
+            EQpeak_incube[(innerchange>0) & (EQpeak_incube[:,i]<s[i]),i] = s[i]
+            EQpeak_incube[(innerchange>0) & (EQpeak_incube[:,i]>e[i]),i] = e[i]       
+            EQpeak_incube[(innerchange<0) & (part[:,i]>0),i] = s[i] #& (EQpeak_incube[:,i]>s[i])
+            EQpeak_incube[(innerchange<0) & (part[:,i]<=0),i] = e[i] #& (EQpeak_incube[:,i]<e[i])        
+        cubebound = np.sum(innerchange*zeromean_gaussian(EQpeak_incube-EQpeak,ls=ls))
+
+    
+        wholecubecount.append(np.all((EQcentres>=hypercube_start) & (EQcentres<hypercube_end),1))
+        wholecubechanges.append(cubebound)
+
+    wholecubecount = np.sum(np.array(wholecubecount),1)                
+    #wholecubecount = np.array(wholecubecount)            
+    wholecubechanges = np.array(wholecubechanges)
     startchanges = np.array(startchanges)
     midchanges = np.array(midchanges)
     endchanges = np.array(endchanges)
     innerchanges = np.array(innerchanges)
-    return startchanges, midchanges, endchanges, innerchanges
+    return startchanges, midchanges, endchanges, innerchanges, wholecubechanges, wholecubecount
 
 #here we go through the combinations of starts and ends in this simple line of hypercubes
-def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,change,gridspacing=0.1,fulldim=False):
+def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,change,gridspacing=0.1,fulldim=False,forceignorenegatives=False,dimthreshold=3):
     """
     EQcentres = training point locations
     hypercube_start,hypercube_end = corners of the hypercube
@@ -207,7 +237,7 @@ def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,change,gridspacing=0.1
     #print("ignorenegatives:")
     #print(ignorenegatives)
     
-    return findbound(EQcentres_not_d,change,ls=ls,d=EQcentres_not_d.shape[1],gridspacing=gridspacing,gridstart=hc_start_not_d-gridspacing,gridend=hc_end_not_d+gridspacing,fulldim=fulldim)
+    return findbound(EQcentres_not_d,change,ls=ls,d=EQcentres_not_d.shape[1],gridspacing=gridspacing,gridstart=hc_start_not_d-gridspacing,gridend=hc_end_not_d+gridspacing,fulldim=fulldim,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
     #return findbound(EQcentres_not_d,change,ls,EQcentres_not_d.shape[1],gridspacing,hc_start_not_d,hc_end_not_d,ignorenegatives=False)
 
 
@@ -225,23 +255,38 @@ def getallpaths(forwardpaths):
     getpaths(0,[])
     return paths
 
-def compute_full_bound(EQcentres,EQweights,ls,diff_dim,dims,cubesize,splitcount=5,gridspacing=0.2):
+def compute_full_bound(X,Y,sigma,ls,diff_dim,dims,cubesize,splitcount=5,gridspacing=0.2,forceignorenegatives=False,dimthreshold=3):
+    K = np.empty([len(X),len(X)])
+    for i in range(len(X)):
+        K[i,:] = zeromean_gaussian(X-X[i,:],ls=ls) #using this function for the EQ RBF
+    alpha = np.linalg.inv(K+np.eye(len(X))*(sigma**2)) @ Y
+    EQcentres = X
+    EQweights = alpha[:,0]
+
+
     hypercube_starts = [np.zeros(dims)*1.0,np.zeros(dims)*1.0]
-    hypercube_ends = [np.full(dims,cubesize)*1.0,np.full(dims,cubesize)*1.0]
+    if type(cubesize)==np.ndarray:
+        hypercube_ends = [cubesize.copy(),cubesize.copy()]
+    else:
+        hypercube_ends = [np.full(dims,cubesize)*1.0,np.full(dims,cubesize)*1.0]
     hypercube_ends[0][diff_dim] = 0
     forwardpaths = [[1],[]]
     backwardpaths = [[],[0]]
 
     print("Splitting...")
-    innerchanges = None
+    wholecubechanges = None
+    wholecubecounts = None 
     #split up the hypercubes a bit (need to make this more intelligent)
     for splitit in range(splitcount):
         split_index = 1
-        if innerchanges is not None:
-            split_index = np.argmax(np.sum(np.abs(innerchanges),1))
+        if wholecubechanges is not None: #switched from using innerchanges to using wholecubechanges
+            split_index = np.argmax(wholecubechanges)
+
+        #if wholecubecounts is not None:   
+        #    split_index = np.argmax(wholecubecounts)
         split_dim = np.argmax(hypercube_ends[split_index]-hypercube_starts[split_index])
         splitcubes(hypercube_starts,hypercube_ends,forwardpaths,backwardpaths,split_index,split_dim,diff_dim)
-        startchanges, midchanges, endchanges, innerchanges = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,diff_dim,ls)
+        startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,diff_dim,ls)
 
     #get all the straightline paths (in the direction we're differentiating) from the start and end of the hypercube
     #e.g. hypercube 0->1->3 and 0->2
@@ -266,28 +311,33 @@ def compute_full_bound(EQcentres,EQweights,ls,diff_dim,dims,cubesize,splitcount=
     print("Checking Segments...")
     for it,seg in enumerate(unique_pathsegments):
         print("\n%d/%d" % (it,len(unique_pathsegments)),end="")
-        #print("------")
-        #print(seg)
         if len(seg)==1:
-            b = getbound(EQcentres,hypercube_starts[seg[0]],hypercube_ends[seg[0]],diff_dim,ls,innerchanges[seg[0],:],gridspacing=gridspacing,fulldim=False)
-            #print("single cube")
-            #print("bound %0.2f" % b)
-            #print("change:")
-            #print(innerchanges[seg[0],:],EQcentres)
+            b = getbound(EQcentres,hypercube_starts[seg[0]],hypercube_ends[seg[0]],diff_dim,ls,innerchanges[seg[0],:],gridspacing=gridspacing,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
         else:
-            #print("multiple cubes")
             search_hypercube_start = np.full_like(hypercube_starts[0],-np.inf)
             search_hypercube_end = np.full_like(hypercube_ends[0],np.inf)
+            cube_diff_dim_start = np.inf
+            cube_diff_dim_end = -np.inf
             for s in seg:
                 print(".",end="")
                 search_hypercube_start = np.max(np.array([search_hypercube_start,hypercube_starts[s]]),0)
                 search_hypercube_end = np.min(np.array([search_hypercube_end,hypercube_ends[s]]),0)
-            if np.all(search_hypercube_start>=search_hypercube_end):
-                #print("Path Invalid")
+                
+                cube_diff_dim_start = min(cube_diff_dim_start,hypercube_starts[s][int(diff_dim)])
+                cube_diff_dim_end = max(cube_diff_dim_end,hypercube_ends[s][int(diff_dim)])                
+            search_hypercube_start[int(diff_dim)] = cube_diff_dim_start
+            search_hypercube_end[int(diff_dim)] = cube_diff_dim_end
+               
+            if np.any(search_hypercube_start>=search_hypercube_end):
+                print("start>end")
                 b = 0
             else:
                 changes = startchanges[seg[0],:] + np.sum(midchanges[seg[1:-1],:],0) + endchanges[seg[-1],:]
-                b = getbound(EQcentres,search_hypercube_start,search_hypercube_end,diff_dim,ls,changes,gridspacing=gridspacing,fulldim=False)
+                #print(changes)
+                #print(EQcentres)
+                #print(search_hypercube_start,search_hypercube_end)
+                b = getbound(EQcentres,search_hypercube_start,search_hypercube_end,diff_dim,ls,changes,gridspacing=gridspacing,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
+        #print(seg,b)    
             #print("bound %0.2f" % b)
             #print("change:")
             #print(changes,EQcentres)
@@ -295,7 +345,7 @@ def compute_full_bound(EQcentres,EQweights,ls,diff_dim,dims,cubesize,splitcount=
             maxval = b
             maxseg = seg
     #print("MAXIMUM CHANGE BOUND %0.3f" % maxval)
-    return maxval, hypercube_starts, hypercube_ends, maxseg
+    return maxval, hypercube_starts, hypercube_ends, maxseg, EQweights
     
 def testing():
     "Testing various methods. Incomplete"
@@ -427,7 +477,7 @@ def testing():
     d = 0
     ls = 2.0
 
-    startchanges, midchanges, endchanges, innerchanges = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls)
+    startchanges, midchanges, endchanges, innerchanges,wholecubechanges = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls)
 
     startchanges, midchanges, endchanges, innerchanges
 
