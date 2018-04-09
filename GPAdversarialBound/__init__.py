@@ -183,9 +183,22 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls):
     as we use the former to select the hypercube to split. wholecubechanges
     is roughly the amount that the function can change in the cube - but unlike
     midchanges or innerchanges, it takes into account how close to the cube
-    the EQcentres are.
+    the EQcentres are. Summary it combines the start, mid, end and inner changes.
     
-    Combines the start, mid, end and inner changes.
+    startchanges, midchanges, endchanges, innerchanges, wholecubechanges, wholecubecount = 
+         getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls)
+    
+    EQcentres = the training locations
+    EQweights = the weights of the Gaussians in the mixtures of gaussians (i.e. the alpha vector = k^-1 y)
+    hypercube_starts,hypercube_ends = hypercube corners
+    d = dimension we're moving alon.
+    ls = lengthscale
+    
+    returns:
+    startchanges, midchanges, endchanges, innerchanges = lists of hypercubes,
+       describe the maximum increase in the GP mean if this were a start
+       cube, a middle cube, an end cube or the only cube.
+    wholecubechanges, wholecubecount = metrics useful for selecting which cube to split
     """
     startchanges =[]
     midchanges = []
@@ -194,6 +207,8 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls):
     wholecubechanges = []
     wholecubecount = []
     for hypercube_start, hypercube_end in zip(hypercube_starts,hypercube_ends):
+        assert hypercube_start.shape[0]==EQcentres.shape[1], "The number of columns in EQcentres should be equal to the dimensions in the hypercube."
+        assert hypercube_end.shape[0]==EQcentres.shape[1], "The number of columns in EQcentres should be equal to the dimensions in the hypercube."
         startchange, midchange, endchange, innerchange = getchanges(EQcentres,EQweights,hypercube_start,hypercube_end,d,ls)
         startchanges.append(startchange)
         midchanges.append(midchange)
