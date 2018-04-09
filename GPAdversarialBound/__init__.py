@@ -317,6 +317,7 @@ def compute_full_bound(X,Y,sigma,ls,diff_dim,dims,cubesize,splitcount=5,gridspac
     maxseg = the sequence of hypercubes that led to the largest change in the mean.
     EQweights = the weights of the Gaussians in the mixtures of gaussians (i.e. the alpha vector = k^-1 y)
     """
+    assert dims == X.shape[1]
     
     #First compute the representer-theorem equivalent of the GP mean function
     # i.e. f = sum_i k(x_i,x_*) alpha_i
