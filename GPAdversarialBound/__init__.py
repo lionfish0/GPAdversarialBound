@@ -222,9 +222,27 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls):
         s = np.delete(hypercube_start,d)
         e = np.delete(hypercube_end,d)
         
+        
+        #This bit of code is for computing a heuristic about the effect of this
+        #cube - so we can decide which cube to slice.
+        
         #where is the nearest point to a maximum?
         part = (EQpeak - (s+e)/2)
-
+        
+        ##debug printing###
+        #print("hypercube_start")
+        #print(hypercube_start.shape)
+        #print("d")
+        #print(d)
+        #print("EQpeak")
+        #print(EQpeak.shape)
+        #print("s,e")
+        #print(s.shape,e.shape)
+        #print("part")
+        #print(part.shape)
+        #print(EQpeak_incube.shape)
+        ###################
+        
         for i in range(len(s)):
             EQpeak_incube[(innerchange>0) & (EQpeak_incube[:,i]<s[i]),i] = s[i]
             EQpeak_incube[(innerchange>0) & (EQpeak_incube[:,i]>e[i]),i] = e[i]       
