@@ -124,7 +124,7 @@ def splitcubes(hypercube_starts,hypercube_ends,forwardpaths,backwardpaths,splitc
     assert len(forwardpaths)==len(hypercube_starts)
     assert len(forwardpaths)==len(hypercube_ends)
 
-def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls):
+def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v):
     """
     startchange, midchange, endchange, innerchange = getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls)
    
@@ -138,6 +138,8 @@ def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls):
     can't be positive). innerchange will equal 1 (going from 0 to 0.5).
     
     d = dimension we're looking at changing over, and ls = lengthscale.
+    
+    ls, v = lengthscale and variance of kernel
     
     Importantly we want several results:
     
@@ -153,8 +155,8 @@ def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls):
      """
     
     #get the highest and lowest values of an EQ between the start and end, along dimension d
-    startvals = EQweights*zeromean_gaussian_1d(EQcentres[:,d]-hypercube_start[d],ls )
-    endvals = EQweights*zeromean_gaussian_1d(EQcentres[:,d]-hypercube_end[d],ls)
+    startvals = EQweights*zeromean_gaussian_1d(EQcentres[:,d]-hypercube_start[d],ls,v )
+    endvals = EQweights*zeromean_gaussian_1d(EQcentres[:,d]-hypercube_end[d],ls, v)
 
     #if the peak is inside the cube we keep the peak weight, otherwise it's not of interest
     midvals = EQweights.copy()
@@ -176,7 +178,52 @@ def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls):
   
     return startchange, midchange, endchange, innerchange
 
-def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls):
+def sig(z):
+    """Logistic sigmoid function"""
+    return 1/(1+np.exp(-z))
+    
+def sig_grad(z):
+    """Gradient of the logistic sigmoid function"""
+    return sig(z)*(1-sig(z))    
+        
+def getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,ls,v,gridspacing=0.1):
+    """
+        EQcentres = the training locations
+        EQweights = the weights of the Gaussians in the mixtures of gaussians (i.e. the alpha vector = k^-1 y)
+        hypercube_start,hypercube_end = hypercube corners
+        ls = lengthscale
+    
+    If we're doing classification then we need to find the change in the posterior, not the change in the 
+    latent function. To do this we need the absolute value of the function as the logistic's gradient
+    depends on it. However, we can't just transform the changes as this makes them non-gaussian etc.
+    
+    Instead we find a lower bound on how much the posterior changes wrt the latent function.
+    
+    To do that we consider the logistic function's derivative:  sigma_grad(z) = sigma(z)(1-sigma(z))
+    
+    We can find the largest value of z in the hypercube and the smallest (most negative).
+    If they're opposite signs then the steepest gradient in the hypercube is sigma_grad(0)
+    If not, then we find the smallest absolute value of both of them, and use that:
+                           sigma_grad(min(abs(minv),abs(maxv)))
+    
+    Returns a value that is the lower bound on the gradient
+    """
+    
+    if np.any(hypercube_start==hypercube_end): return 0.25 #handle any hypercubes that are flat
+            
+    maxv = findbound(EQcentres, EQweights, ls, v, EQcentres.shape[1], gridspacing, hypercube_start, hypercube_end)[0]
+    minv = -findbound(EQcentres, -EQweights, ls, v, EQcentres.shape[1], gridspacing, hypercube_start, hypercube_end)[0]
+
+    if np.sign(maxv)!=np.sign(minv):
+        boundgrad = sig_grad(0)
+    else:  
+        minval = min(np.abs(maxv),np.abs(minv))
+        boundgrad = sig_grad(minval)
+        
+    return boundgrad
+    
+
+def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridspacing,logistic_transform=False):
     """
     Basically computes the startchanges, midchanges, endchanges, innerchanges for
     all the hypercubes. We also compute wholecubechanges and wholecubecount
@@ -209,7 +256,16 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls):
     for hypercube_start, hypercube_end in zip(hypercube_starts,hypercube_ends):
         assert hypercube_start.shape[0]==EQcentres.shape[1], "The number of columns in EQcentres should be equal to the dimensions in the hypercube."
         assert hypercube_end.shape[0]==EQcentres.shape[1], "The number of columns in EQcentres should be equal to the dimensions in the hypercube."
-        startchange, midchange, endchange, innerchange = getchanges(EQcentres,EQweights,hypercube_start,hypercube_end,d,ls)
+        startchange, midchange, endchange, innerchange = getchanges(EQcentres,EQweights,hypercube_start,hypercube_end,d,ls,v)
+        
+        #New code for handling conversion to classification
+        if logistic_transform:
+            logisticgradbound = getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,ls,v,gridspacing=gridspacing)
+            startchange *= logisticgradbound
+            midchange *= logisticgradbound
+            endchange *= logisticgradbound
+            innerchange *= logisticgradbound
+        
         startchanges.append(startchange)
         midchanges.append(midchange)
         endchanges.append(endchange)
@@ -248,7 +304,7 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls):
             EQpeak_incube[(innerchange>0) & (EQpeak_incube[:,i]>e[i]),i] = e[i]       
             EQpeak_incube[(innerchange<0) & (part[:,i]>0),i] = s[i] #& (EQpeak_incube[:,i]>s[i])
             EQpeak_incube[(innerchange<0) & (part[:,i]<=0),i] = e[i] #& (EQpeak_incube[:,i]<e[i])        
-        cubebound = np.sum(innerchange*zeromean_gaussian(EQpeak_incube-EQpeak,ls=ls))
+        cubebound = np.sum(innerchange*zeromean_gaussian(EQpeak_incube-EQpeak,ls=ls,v=v))
 
     
         wholecubecount.append(np.all((EQcentres>=hypercube_start) & (EQcentres<hypercube_end),1))
@@ -264,12 +320,12 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls):
     return startchanges, midchanges, endchanges, innerchanges, wholecubechanges, wholecubecount
 
 #here we go through the combinations of starts and ends in this simple line of hypercubes
-def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,change,gridspacing=0.1,fulldim=False,forceignorenegatives=False,dimthreshold=3):
+def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,v,change,gridspacing=0.1,fulldim=False,forceignorenegatives=False,dimthreshold=3):
     """
     EQcentres = training point locations
     hypercube_start,hypercube_end = corners of the hypercube
     d = dimension over which we flatten the search
-    ls = lengthscale
+    ls,v = lengthscale and variance of kernel
     change = the training 'y' value for each training point
     gridspacing= the resolution of the search grid (default 0.1)
     fulldim= Over 3d the algorithm falls back to using a low-dimensional linear manifold to reduce the
@@ -280,7 +336,7 @@ def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,change,gridspacing=0.1
     hc_end_not_d = np.delete(hypercube_end,d)
     if np.all(hc_start_not_d==hc_end_not_d): return 0
 
-    return findbound(EQcentres_not_d,change,ls=ls,d=EQcentres_not_d.shape[1],gridspacing=gridspacing,gridstart=hc_start_not_d-gridspacing,gridend=hc_end_not_d+gridspacing,fulldim=fulldim,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
+    return findbound(EQcentres_not_d,change,ls=ls,v=v,d=EQcentres_not_d.shape[1],gridspacing=gridspacing,gridstart=hc_start_not_d-gridspacing,gridend=hc_end_not_d+gridspacing,fulldim=fulldim,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
 
 def getallpaths(forwardpaths):    
     def getpaths(currentcube,path):
@@ -296,13 +352,13 @@ def getallpaths(forwardpaths):
     getpaths(0,[])
     return paths
 
-def compute_full_bound(X,Y,sigma,ls,diff_dim,dims,cubesize,splitcount=5,gridspacing=0.2,forceignorenegatives=False,dimthreshold=3):
+def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridspacing=0.2,forceignorenegatives=False,dimthreshold=3,K=None,logistic_transform=False):
     """
     maxval, hypercube_starts, hypercube_ends, maxseg, EQweights = compute_full_bound(X,Y,sigma,ls,diff_dim,dims,cubesize,splitcount=5,gridspacing=0.2,forceignorenegatives=False,dimthreshold=3)
 
     X,Y = training inputs and outputs.
     sigma = standard deviation of noise.
-    ls = lengthscale.
+    ls,v = lengthscale and variance of RBF kernel
     diff_dim = dimension over which we're interested in the bound on change in the posterior mean.
     dims = number of dimensions, probably X.shape[1].
     cubesize = either a scalar or a vector describing the size of the volume over which we're testing. E.g. if there are three inputs, one can range between 0 and 1 and the other two between 0 and 255, then this is a vector [1,255,255].
@@ -323,9 +379,12 @@ def compute_full_bound(X,Y,sigma,ls,diff_dim,dims,cubesize,splitcount=5,gridspac
     # i.e. f = sum_i k(x_i,x_*) alpha_i
     #save the training locations in EQcentres
     #and the 'alpha' weights in 'EQweights'
-    K = np.empty([len(X),len(X)])
-    for i in range(len(X)):
-        K[i,:] = zeromean_gaussian(X-X[i,:],ls=ls) #using this function for the EQ RBF
+    
+    if K is None: #compute it ourselves,
+        K = np.empty([len(X),len(X)])
+        for i in range(len(X)):
+            K[i,:] = zeromean_gaussian(X-X[i,:],ls=ls,v=v) #using this function for the EQ RBF
+            
     alpha = np.linalg.inv(K+np.eye(len(X))*(sigma**2)) @ Y
     EQcentres = X
     EQweights = alpha[:,0]
@@ -353,7 +412,7 @@ def compute_full_bound(X,Y,sigma,ls,diff_dim,dims,cubesize,splitcount=5,gridspac
             split_index = np.argmax(wholecubechanges)
         split_dim = np.argmax(hypercube_ends[split_index]-hypercube_starts[split_index])
         splitcubes(hypercube_starts,hypercube_ends,forwardpaths,backwardpaths,split_index,split_dim,diff_dim)
-        startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,diff_dim,ls)
+        startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,diff_dim,ls,v,gridspacing,logistic_transform)
 
 
     #get all the straightline paths (in the direction we're differentiating) from the start and end of the hypercube
@@ -383,7 +442,7 @@ def compute_full_bound(X,Y,sigma,ls,diff_dim,dims,cubesize,splitcount=5,gridspac
     for it,seg in enumerate(unique_pathsegments):
         print("\n%d/%d" % (it,len(unique_pathsegments)),end="")
         if len(seg)==1: #if it's just one segment (don't iterate over, instead use the innerchanges - as we'll just be moving within this cube).
-            b = getbound(EQcentres,hypercube_starts[seg[0]],hypercube_ends[seg[0]],diff_dim,ls,innerchanges[seg[0],:],gridspacing=gridspacing,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
+            b = getbound(EQcentres,hypercube_starts[seg[0]],hypercube_ends[seg[0]],diff_dim,ls,v,innerchanges[seg[0],:],gridspacing=gridspacing,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
         else: #otherwise we need to combine the relevant start, mid and end parts
               #e.g. 0->1->3, add the starts from 0, the mids from 1 and the ends for 3.
             search_hypercube_start = np.full_like(hypercube_starts[0],-np.inf)
@@ -408,7 +467,7 @@ def compute_full_bound(X,Y,sigma,ls,diff_dim,dims,cubesize,splitcount=5,gridspac
             else: #we add together the starts, mids and ends, and treat it as a d-1 dimensional
                   #mixture of gaussians problem.
                 changes = startchanges[seg[0],:] + np.sum(midchanges[seg[1:-1],:],0) + endchanges[seg[-1],:]
-                b = getbound(EQcentres,search_hypercube_start,search_hypercube_end,diff_dim,ls,changes,gridspacing=gridspacing,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
+                b = getbound(EQcentres,search_hypercube_start,search_hypercube_end,diff_dim,ls,v,changes,gridspacing=gridspacing,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
                 
         print(seg,b)
         if b>maxval:
@@ -495,7 +554,8 @@ def testing():
     hypercube_end = np.array([4,4])
     d = 0
     ls = 2.0
-    startchange, midchange, endchange, innerchange = getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls)
+    v = 1.0
+    startchange, midchange, endchange, innerchange = getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v)
 
 
     #startchange: if this was a starting cube, starting at 0, with a peak at -1, it can't increase over the cube so we use zero
@@ -515,7 +575,8 @@ def testing():
     hypercube_end = np.array([4,4])
     d = 0
     ls = 2.0
-    startchange, midchange, endchange, innerchange = getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls)
+    v = 1.0
+    startchange, midchange, endchange, innerchange = getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v)
 
     #if we are starting in this cube, then, (for a centre at x=1) although there's a +ve gradient from 0 to 1,
     #there's more negative on the far side, so it's "best" to start on the boundary
@@ -524,31 +585,31 @@ def testing():
 
     assert startchange[0] == 0
     assert startchange[1] == 0
-    assert startchange[2] == zeromean_gaussian_1d(1,2)-zeromean_gaussian_1d(3,2)
+    assert startchange[2] == zeromean_gaussian_1d(1,2,1)-zeromean_gaussian_1d(3,2,1)
 
     #for a centre at x=3, with negative weight, the largest increase is for x=3 to x=4. (as it goes from negative to less-negative)
-    assert startchange[3]==1-zeromean_gaussian_1d(1,2)
+    assert startchange[3]==1-zeromean_gaussian_1d(1,2,1)
 
     #midchange: 0th one should be negative, as its left boundary is higher than its right (as the peak is more
     #to the left). 1st is zero (as the values at the two boundaries are equal). 2nd is positive. 3rd is like the
     #0th but inverted & flipped.
-    assert midchange[0] == zeromean_gaussian_1d(3,2)-zeromean_gaussian_1d(1,2)
+    assert midchange[0] == zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1)
     assert midchange[1] == 0
-    assert midchange[2] == -(zeromean_gaussian_1d(3,2)-zeromean_gaussian_1d(1,2))
-    assert midchange[3] == (zeromean_gaussian_1d(3,2)-zeromean_gaussian_1d(1,2))
+    assert midchange[2] == -(zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1))
+    assert midchange[3] == (zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1))
 
     #endchange
     #0th: will be the change from zeromean_gaussian_1d(0,2)-zeromean_gaussian_1d(1,2)
-    assert endchange[0] == 1-zeromean_gaussian_1d(1,2)
-    assert endchange[1] == 1-zeromean_gaussian_1d(2,2)
-    assert endchange[2] == 1-zeromean_gaussian_1d(3,2)
+    assert endchange[0] == 1-zeromean_gaussian_1d(1,2,1)
+    assert endchange[1] == 1-zeromean_gaussian_1d(2,2,1)
+    assert endchange[2] == 1-zeromean_gaussian_1d(3,2,1)
     assert endchange[3] == 0
 
     #innerchange
-    assert innerchange[0] == 1-zeromean_gaussian_1d(1,2)
-    assert innerchange[1] == 1-zeromean_gaussian_1d(2,2)
-    assert innerchange[2] == 1-zeromean_gaussian_1d(3,2)
-    assert innerchange[3] == 1-zeromean_gaussian_1d(1,2)
+    assert innerchange[0] == 1-zeromean_gaussian_1d(1,2,1)
+    assert innerchange[1] == 1-zeromean_gaussian_1d(2,2,1)
+    assert innerchange[2] == 1-zeromean_gaussian_1d(3,2,1)
+    assert innerchange[3] == 1-zeromean_gaussian_1d(1,2,1)
 
 
     EQcentres = np.array([[1,0],[2,0],[3,0],[3,2]])
@@ -557,17 +618,17 @@ def testing():
     hypercube_ends = np.array([[4,4]])
     d = 0
     ls = 2.0
-
+    v = 1.0
     ############test getallchanges############
-    startchanges, midchanges, endchanges, innerchanges,wholecubechanges = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls)
+    startchanges, midchanges, endchanges, innerchanges,wholecubechanges = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v)
 
     startchanges, midchanges, endchanges, innerchanges
 
-    assert np.all(startchanges == np.array([0, 0, zeromean_gaussian_1d(1,2)-zeromean_gaussian_1d(3,2), 1-zeromean_gaussian_1d(1,2)]))
-    assert np.all(midchanges == np.array([zeromean_gaussian_1d(3,2)-zeromean_gaussian_1d(1,2),0, -(zeromean_gaussian_1d(3,2)-zeromean_gaussian_1d(1,2)),(zeromean_gaussian_1d(3,2)-zeromean_gaussian_1d(1,2))]))
-    assert np.all(endchange==np.array([1-zeromean_gaussian_1d(1,2),1-zeromean_gaussian_1d(2,2),1-zeromean_gaussian_1d(3,2),0]))
-    assert np.all(innerchange==np.array([1-zeromean_gaussian_1d(1,2),1-zeromean_gaussian_1d(2,2),
-                                         1-zeromean_gaussian_1d(3,2),1-zeromean_gaussian_1d(1,2)]))
+    assert np.all(startchanges == np.array([0, 0, zeromean_gaussian_1d(1,2,1)-zeromean_gaussian_1d(3,2,1), 1-zeromean_gaussian_1d(1,2,1)]))
+    assert np.all(midchanges == np.array([zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1),0, -(zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1)),(zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1))]))
+    assert np.all(endchange==np.array([1-zeromean_gaussian_1d(1,2,1),1-zeromean_gaussian_1d(2,2,1),1-zeromean_gaussian_1d(3,2,1),0]))
+    assert np.all(innerchange==np.array([1-zeromean_gaussian_1d(1,2,1),1-zeromean_gaussian_1d(2,2,1),
+                                         1-zeromean_gaussian_1d(3,2,1),1-zeromean_gaussian_1d(1,2,1)]))
     
     ############test getallpaths############
     
