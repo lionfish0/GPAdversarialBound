@@ -159,7 +159,7 @@ def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v):
     endvals = EQweights*zeromean_gaussian_1d(EQcentres[:,d]-hypercube_end[d],ls, v)
 
     #if the peak is inside the cube we keep the peak weight, otherwise it's not of interest
-    midvals = EQweights.copy()
+    midvals = EQweights.copy()*v
     midvals[(EQcentres[:,d]<hypercube_start[d]) | (EQcentres[:,d]>hypercube_end[d])] = np.nan
 
     #starting cube: we're interested in the biggest increase possible from any location to the end of the hypercube
@@ -262,7 +262,7 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gri
         #New code for handling conversion to classification
         if logistic_transform:
             logisticgradbound = getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,ls,v,gridres=gridres)
-            print("LOGISTIC TRANSFORM BOUND: %0.4f" % logisticgradbound)
+            #print("LOGISTIC TRANSFORM BOUND: %0.4f" % logisticgradbound)
             startchange *= logisticgradbound
             midchange *= logisticgradbound
             endchange *= logisticgradbound
@@ -286,20 +286,6 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gri
         
         #where is the nearest point to a maximum?
         part = (EQpeak - (s+e)/2)
-        
-        ##debug printing###
-        #print("hypercube_start")
-        #print(hypercube_start.shape)
-        #print("d")
-        #print(d)
-        #print("EQpeak")
-        #print(EQpeak.shape)
-        #print("s,e")
-        #print(s.shape,e.shape)
-        #print("part")
-        #print(part.shape)
-        #print(EQpeak_incube.shape)
-        ###################
         
         for i in range(len(s)):
             EQpeak_incube[(innerchange>0) & (EQpeak_incube[:,i]<s[i]),i] = s[i]
@@ -556,7 +542,7 @@ def testing():
     hypercube_end = np.array([4,4])
     d = 0
     ls = 2.0
-    v = 1.0
+    v = 2.0
     startchange, midchange, endchange, innerchange = getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v)
 
 
@@ -564,7 +550,7 @@ def testing():
     assert np.all(startchange == 0)
     from boundmixofgaussians import zeromean_gaussian_1d, zeromean_gaussian, findbound, PCA
     #midchange: if it's a middle cube, we integrate over the whole of the cube
-    assert np.all(midchange == zeromean_gaussian_1d(5,2,1)-zeromean_gaussian_1d(1,2,1))
+    assert np.all(midchange == zeromean_gaussian_1d(5,2,2)-zeromean_gaussian_1d(1,2,2))
     #similar to startchange, if it's the last cube, the whole function has a negative gradient over the cube, so
     #the largest value is zero.
     assert np.all(endchange == 0)
@@ -577,7 +563,7 @@ def testing():
     hypercube_end = np.array([4,4])
     d = 0
     ls = 2.0
-    v = 1.0
+    v = 0.5
     startchange, midchange, endchange, innerchange = getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v)
 
     #if we are starting in this cube, then, (for a centre at x=1) although there's a +ve gradient from 0 to 1,
@@ -587,51 +573,86 @@ def testing():
 
     assert startchange[0] == 0
     assert startchange[1] == 0
-    assert startchange[2] == zeromean_gaussian_1d(1,2,1)-zeromean_gaussian_1d(3,2,1)
+    assert startchange[2] == zeromean_gaussian_1d(1,2,0.5)-zeromean_gaussian_1d(3,2,0.5)
 
     #for a centre at x=3, with negative weight, the largest increase is for x=3 to x=4. (as it goes from negative to less-negative)
-    assert startchange[3]==1-zeromean_gaussian_1d(1,2,1)
+    assert startchange[3]==v-zeromean_gaussian_1d(1,2,0.5)
 
     #midchange: 0th one should be negative, as its left boundary is higher than its right (as the peak is more
     #to the left). 1st is zero (as the values at the two boundaries are equal). 2nd is positive. 3rd is like the
     #0th but inverted & flipped.
-    assert midchange[0] == zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1)
+    assert midchange[0] == zeromean_gaussian_1d(3,2,0.5)-zeromean_gaussian_1d(1,2,0.5)
     assert midchange[1] == 0
-    assert midchange[2] == -(zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1))
-    assert midchange[3] == (zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1))
+    assert midchange[2] == -(zeromean_gaussian_1d(3,2,0.5)-zeromean_gaussian_1d(1,2,0.5))
+    assert midchange[3] == (zeromean_gaussian_1d(3,2,0.5)-zeromean_gaussian_1d(1,2,0.5))
 
     #endchange
     #0th: will be the change from zeromean_gaussian_1d(0,2)-zeromean_gaussian_1d(1,2)
-    assert endchange[0] == 1-zeromean_gaussian_1d(1,2,1)
-    assert endchange[1] == 1-zeromean_gaussian_1d(2,2,1)
-    assert endchange[2] == 1-zeromean_gaussian_1d(3,2,1)
+    assert endchange[0] == v-zeromean_gaussian_1d(1,2,0.5)
+    assert endchange[1] == v-zeromean_gaussian_1d(2,2,0.5)
+    assert endchange[2] == v-zeromean_gaussian_1d(3,2,0.5)
     assert endchange[3] == 0
 
     #innerchange
-    assert innerchange[0] == 1-zeromean_gaussian_1d(1,2,1)
-    assert innerchange[1] == 1-zeromean_gaussian_1d(2,2,1)
-    assert innerchange[2] == 1-zeromean_gaussian_1d(3,2,1)
-    assert innerchange[3] == 1-zeromean_gaussian_1d(1,2,1)
+    assert innerchange[0] == v-zeromean_gaussian_1d(1,2,0.5)
+    assert innerchange[1] == v-zeromean_gaussian_1d(2,2,0.5)
+    assert innerchange[2] == v-zeromean_gaussian_1d(3,2,0.5)
+    assert innerchange[3] == v-zeromean_gaussian_1d(1,2,0.5)
 
-
+    ############test getallchanges############
     EQcentres = np.array([[1,0],[2,0],[3,0],[3,2]])
     EQweights = np.array([1.0,1.0,1.0,-1.0])
     hypercube_starts = np.array([[0,0]])
     hypercube_ends = np.array([[4,4]])
     d = 0
     ls = 2.0
-    v = 1.0
-    ############test getallchanges############
+    v = 3.0
+
     startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres=0.2)
 
     startchanges, midchanges, endchanges, innerchanges
 
-    assert np.all(startchanges == np.array([0, 0, zeromean_gaussian_1d(1,2,1)-zeromean_gaussian_1d(3,2,1), 1-zeromean_gaussian_1d(1,2,1)]))
-    assert np.all(midchanges == np.array([zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1),0, -(zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1)),(zeromean_gaussian_1d(3,2,1)-zeromean_gaussian_1d(1,2,1))]))
-    assert np.all(endchange==np.array([1-zeromean_gaussian_1d(1,2,1),1-zeromean_gaussian_1d(2,2,1),1-zeromean_gaussian_1d(3,2,1),0]))
-    assert np.all(innerchange==np.array([1-zeromean_gaussian_1d(1,2,1),1-zeromean_gaussian_1d(2,2,1),
-                                         1-zeromean_gaussian_1d(3,2,1),1-zeromean_gaussian_1d(1,2,1)]))
+    assert np.all(startchanges == np.array([0, 0, zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(3,2,v), v-zeromean_gaussian_1d(1,2,v)]))
+    assert np.all(midchanges == np.array([zeromean_gaussian_1d(3,2,v)-zeromean_gaussian_1d(1,2,v),0, -(zeromean_gaussian_1d(3,2,v)-zeromean_gaussian_1d(1,2,v)),(zeromean_gaussian_1d(3,2,v)-zeromean_gaussian_1d(1,2,v))]))
+    assert np.all(endchanges==np.array([v-zeromean_gaussian_1d(1,2,v),v-zeromean_gaussian_1d(2,2,v),v-zeromean_gaussian_1d(3,2,v),0])), (np.array([v-zeromean_gaussian_1d(1,2,v),v-zeromean_gaussian_1d(2,2,v),v-zeromean_gaussian_1d(3,2,v),0]),endchange)
+    assert np.all(innerchanges==np.array([v-zeromean_gaussian_1d(1,2,v),v-zeromean_gaussian_1d(2,2,v),
+                                         v-zeromean_gaussian_1d(3,2,v),v-zeromean_gaussian_1d(1,2,v)]))
+
+    ############test getallchanges (out of box), d=1############
+    EQcentres = np.array([[0,1],[2,4]])
+    EQweights = np.array([1.0,-1.0])
+    hypercube_starts = np.array([[0,2]])
+    hypercube_ends = np.array([[4,3]])
+    d = 1
+    ls = 2.0
+    v = 3.0
+
+    startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres=0.2)
+
+    startchanges, midchanges, endchanges, innerchanges
+
+    assert np.all(startchanges == np.array([0,0]))
+    assert np.all(midchanges == np.array([zeromean_gaussian_1d(2,2,v)-zeromean_gaussian_1d(1,2,v), zeromean_gaussian_1d(2,2,v)-zeromean_gaussian_1d(1,2,v)]))
+    assert np.all(endchanges==np.array([0,0]))
+    assert np.all(innerchanges==np.array([0,0]))
     
+    ############test getallchanges again (out of box), d=1############
+    EQcentres = np.array([[0,1],[2,4]])
+    EQweights = np.array([-1.0,1.0])
+    hypercube_starts = np.array([[0,2]])
+    hypercube_ends = np.array([[4,3]])
+    d = 1
+    ls = 2.0
+    v = 3.0
+
+    startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres=0.2)
+
+    startchanges, midchanges, endchanges, innerchanges
+
+    assert np.all(startchanges == np.array([zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v), zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v)]))
+    assert np.all(midchanges == np.array([zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v), zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v)]))
+    assert np.all(endchanges==np.array([zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v), zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v)]))
+    assert np.all(innerchanges==np.array([zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v), zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v)]))
     ############test getallpaths############
     
     #0->1 & 2
@@ -641,5 +662,5 @@ def testing():
     #so the paths are:
     #0123,01246,0125,023,0246,025
     assert getallpaths([[1,2],[2],[3,4,5],[],[6],[],[]])==[[0, 1, 2, 3],[0, 1, 2, 4, 6],[0, 1, 2, 5],[0, 2, 3],[0, 2, 4, 6],[0, 2, 5]]
-
+    print("All tests successful!")
     
