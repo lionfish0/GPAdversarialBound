@@ -186,12 +186,13 @@ def sig_grad(z):
     """Gradient of the logistic sigmoid function"""
     return sig(z)*(1-sig(z))    
         
-def getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,ls,v,gridspacing=0.1):
+def getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,ls,v,gridres=10):
     """
         EQcentres = the training locations
         EQweights = the weights of the Gaussians in the mixtures of gaussians (i.e. the alpha vector = k^-1 y)
         hypercube_start,hypercube_end = hypercube corners
         ls = lengthscale
+        gridcount = resolution of grid
     
     If we're doing classification then we need to find the change in the posterior, not the change in the 
     latent function. To do this we need the absolute value of the function as the logistic's gradient
@@ -210,9 +211,9 @@ def getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,l
     """
     
     if np.any(hypercube_start==hypercube_end): return 0.25 #handle any hypercubes that are flat
-            
-    maxv = findbound(EQcentres, EQweights, ls, v, EQcentres.shape[1], gridspacing, hypercube_start, hypercube_end)[0]
-    minv = -findbound(EQcentres, -EQweights, ls, v, EQcentres.shape[1], gridspacing, hypercube_start, hypercube_end)[0]
+    
+    maxv = findbound(EQcentres, EQweights, ls, v, EQcentres.shape[1], gridres, hypercube_start, hypercube_end)[0]
+    minv = -findbound(EQcentres, -EQweights, ls, v, EQcentres.shape[1], gridres, hypercube_start, hypercube_end)[0]
 
     if np.sign(maxv)!=np.sign(minv):
         boundgrad = sig_grad(0)
@@ -223,7 +224,7 @@ def getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,l
     return boundgrad
     
 
-def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridspacing,logistic_transform=False):
+def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres,logistic_transform=False):
     """
     Basically computes the startchanges, midchanges, endchanges, innerchanges for
     all the hypercubes. We also compute wholecubechanges and wholecubecount
@@ -260,7 +261,8 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gri
         
         #New code for handling conversion to classification
         if logistic_transform:
-            logisticgradbound = getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,ls,v,gridspacing=gridspacing)
+            logisticgradbound = getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,ls,v,gridres=gridres)
+            print("LOGISTIC TRANSFORM BOUND: %0.4f" % logisticgradbound)
             startchange *= logisticgradbound
             midchange *= logisticgradbound
             endchange *= logisticgradbound
@@ -320,14 +322,14 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gri
     return startchanges, midchanges, endchanges, innerchanges, wholecubechanges, wholecubecount
 
 #here we go through the combinations of starts and ends in this simple line of hypercubes
-def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,v,change,gridspacing=0.1,fulldim=False,forceignorenegatives=False,dimthreshold=3):
+def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,v,change,gridres=10,fulldim=False,forceignorenegatives=False,dimthreshold=3):
     """
     EQcentres = training point locations
     hypercube_start,hypercube_end = corners of the hypercube
     d = dimension over which we flatten the search
     ls,v = lengthscale and variance of kernel
     change = the training 'y' value for each training point
-    gridspacing= the resolution of the search grid (default 0.1)
+    gridres = the resolution of the search grid (default 10)
     fulldim= Over 3d the algorithm falls back to using a low-dimensional linear manifold to reduce the
      search grid volume. Set to True to over-ride this behaviour. Default=False
     """
@@ -336,7 +338,7 @@ def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,v,change,gridspacing=0
     hc_end_not_d = np.delete(hypercube_end,d)
     if np.all(hc_start_not_d==hc_end_not_d): return 0
 
-    return findbound(EQcentres_not_d,change,ls=ls,v=v,d=EQcentres_not_d.shape[1],gridspacing=gridspacing,gridstart=hc_start_not_d-gridspacing,gridend=hc_end_not_d+gridspacing,fulldim=fulldim,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
+    return findbound(EQcentres_not_d,change,ls=ls,v=v,d=EQcentres_not_d.shape[1],gridres=gridres,gridstart=hc_start_not_d,gridend=hc_end_not_d,fulldim=fulldim,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
 
 def getallpaths(forwardpaths):    
     def getpaths(currentcube,path):
@@ -352,9 +354,9 @@ def getallpaths(forwardpaths):
     getpaths(0,[])
     return paths
 
-def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridspacing=0.2,forceignorenegatives=False,dimthreshold=3,K=None,logistic_transform=False):
+def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridres=10,forceignorenegatives=False,dimthreshold=3,K=None,logistic_transform=False):
     """
-    maxval, hypercube_starts, hypercube_ends, maxseg, EQweights = compute_full_bound(X,Y,sigma,ls,diff_dim,dims,cubesize,splitcount=5,gridspacing=0.2,forceignorenegatives=False,dimthreshold=3)
+    maxval, hypercube_starts, hypercube_ends, maxseg, EQweights = compute_full_bound(X,Y,sigma,ls,diff_dim,dims,cubesize,splitcount=5,gridres=5,forceignorenegatives=False,dimthreshold=3)
 
     X,Y = training inputs and outputs.
     sigma = standard deviation of noise.
@@ -363,7 +365,7 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridsp
     dims = number of dimensions, probably X.shape[1].
     cubesize = either a scalar or a vector describing the size of the volume over which we're testing. E.g. if there are three inputs, one can range between 0 and 1 and the other two between 0 and 255, then this is a vector [1,255,255].
     splitcount = number of times we split the space (you'll end up with this many hypercubes + 2)
-    gridspacing = the spacing used during the bound computation (recommend about 10% of the cubesize, so for a 3d space we have ~1000 test points). A smaller value will improve the bound, but will be slower.
+    gridres = the resolution used during the bound computation. This is the number of points along a hypercuboid's longest edge, so would (for a hypercube) lead to up to gridres^3 test points (e.g. 10^3=1000).
     forceignorenegatives=False this is for testing to see effect on a low-dimensional training set of ignoring negatives (this is necessary anyway at higher dimensions as we use a low-dimensional PCA approximation to search for an upper bound over for the mixture of gaussians.
     dimthreshold=3 more will potentially improve the bound but will be slower.
     
@@ -412,7 +414,7 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridsp
             split_index = np.argmax(wholecubechanges)
         split_dim = np.argmax(hypercube_ends[split_index]-hypercube_starts[split_index])
         splitcubes(hypercube_starts,hypercube_ends,forwardpaths,backwardpaths,split_index,split_dim,diff_dim)
-        startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,diff_dim,ls,v,gridspacing,logistic_transform)
+        startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,diff_dim,ls,v,gridres,logistic_transform)
 
 
     #get all the straightline paths (in the direction we're differentiating) from the start and end of the hypercube
@@ -442,7 +444,7 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridsp
     for it,seg in enumerate(unique_pathsegments):
         print("\n%d/%d" % (it,len(unique_pathsegments)),end="")
         if len(seg)==1: #if it's just one segment (don't iterate over, instead use the innerchanges - as we'll just be moving within this cube).
-            b = getbound(EQcentres,hypercube_starts[seg[0]],hypercube_ends[seg[0]],diff_dim,ls,v,innerchanges[seg[0],:],gridspacing=gridspacing,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
+            b = getbound(EQcentres,hypercube_starts[seg[0]],hypercube_ends[seg[0]],diff_dim,ls,v,innerchanges[seg[0],:],gridres=gridres,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
         else: #otherwise we need to combine the relevant start, mid and end parts
               #e.g. 0->1->3, add the starts from 0, the mids from 1 and the ends for 3.
             search_hypercube_start = np.full_like(hypercube_starts[0],-np.inf)
@@ -467,7 +469,7 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridsp
             else: #we add together the starts, mids and ends, and treat it as a d-1 dimensional
                   #mixture of gaussians problem.
                 changes = startchanges[seg[0],:] + np.sum(midchanges[seg[1:-1],:],0) + endchanges[seg[-1],:]
-                b = getbound(EQcentres,search_hypercube_start,search_hypercube_end,diff_dim,ls,v,changes,gridspacing=gridspacing,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
+                b = getbound(EQcentres,search_hypercube_start,search_hypercube_end,diff_dim,ls,v,changes,gridres=gridres,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
                 
         print(seg,b)
         if b>maxval:
@@ -562,7 +564,7 @@ def testing():
     assert np.all(startchange == 0)
     from boundmixofgaussians import zeromean_gaussian_1d, zeromean_gaussian, findbound, PCA
     #midchange: if it's a middle cube, we integrate over the whole of the cube
-    assert np.all(midchange == zeromean_gaussian_1d(5,2)-zeromean_gaussian_1d(1,2))
+    assert np.all(midchange == zeromean_gaussian_1d(5,2,1)-zeromean_gaussian_1d(1,2,1))
     #similar to startchange, if it's the last cube, the whole function has a negative gradient over the cube, so
     #the largest value is zero.
     assert np.all(endchange == 0)
@@ -620,7 +622,7 @@ def testing():
     ls = 2.0
     v = 1.0
     ############test getallchanges############
-    startchanges, midchanges, endchanges, innerchanges,wholecubechanges = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v)
+    startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres=0.2)
 
     startchanges, midchanges, endchanges, innerchanges
 
