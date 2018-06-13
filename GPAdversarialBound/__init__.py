@@ -126,7 +126,7 @@ def splitcubes(hypercube_starts,hypercube_ends,forwardpaths,backwardpaths,splitc
 
 def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v):
     """
-    startchange, midchange, endchange, innerchange = getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls)
+    startchange, midchange, endchange, innerchange = getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v)
    
     Given a hypercube, specified by hypercube_start and hypercube_end
     what are the bounds on the greatest changes to the peak of each gaussian, in
@@ -212,8 +212,8 @@ def getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,l
     
     if np.any(hypercube_start==hypercube_end): return 0.25 #handle any hypercubes that are flat
     
-    maxv = findbound(EQcentres, EQweights, ls, v, EQcentres.shape[1], gridres, hypercube_start, hypercube_end)[0]
-    minv = -findbound(EQcentres, -EQweights, ls, v, EQcentres.shape[1], gridres, hypercube_start, hypercube_end)[0]
+    maxv = findbound(EQcentres, EQweights, ls, EQcentres.shape[1], gridres, hypercube_start, hypercube_end)[0]
+    minv = -findbound(EQcentres, -EQweights, ls, EQcentres.shape[1], gridres, hypercube_start, hypercube_end)[0]
 
     if np.sign(maxv)!=np.sign(minv):
         boundgrad = sig_grad(0)
@@ -261,6 +261,7 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gri
         
         #New code for handling conversion to classification
         if logistic_transform:
+            assert False, "needs testing"
             logisticgradbound = getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,ls,v,gridres=gridres)
             #print("LOGISTIC TRANSFORM BOUND: %0.4f" % logisticgradbound)
             startchange *= logisticgradbound
@@ -319,12 +320,19 @@ def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,v,change,gridres=10,fu
     fulldim= Over 3d the algorithm falls back to using a low-dimensional linear manifold to reduce the
      search grid volume. Set to True to over-ride this behaviour. Default=False
     """
+    #print("getbound:")
+    #print(EQcentres)
+    #print(hypercube_start,hypercube_end)
+    #print(d,ls,v)
+    #print(change)
+    #print(gridres)
+    #print(fulldim,forceignorenegatives,dimthreshold)
     EQcentres_not_d = np.delete(EQcentres,d,1)
     hc_start_not_d = np.delete(hypercube_start,d)
     hc_end_not_d = np.delete(hypercube_end,d)
     if np.all(hc_start_not_d==hc_end_not_d): return 0
 
-    return findbound(EQcentres_not_d,change,ls=ls,v=v,d=EQcentres_not_d.shape[1],gridres=gridres,gridstart=hc_start_not_d,gridend=hc_end_not_d,fulldim=fulldim,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
+    return findbound(EQcentres_not_d,change,ls=ls,d=EQcentres_not_d.shape[1],gridres=gridres,gridstart=hc_start_not_d,gridend=hc_end_not_d,fulldim=fulldim,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
 
 def getallpaths(forwardpaths):    
     def getpaths(currentcube,path):
@@ -369,13 +377,23 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridre
     #and the 'alpha' weights in 'EQweights'
     
     if K is None: #compute it ourselves,
+        print("K is not set, computing")
         K = np.empty([len(X),len(X)])
         for i in range(len(X)):
             K[i,:] = zeromean_gaussian(X-X[i,:],ls=ls,v=v) #using this function for the EQ RBF
             
+    #print("K")
+    #print(K)
+    #print("(K+sigI)^-1")
+    #print(np.linalg.inv(K+np.eye(len(X))))
+    
     alpha = np.linalg.inv(K+np.eye(len(X))*(sigma**2)) @ Y
+    #print("Alpha")
+    #print(alpha)
     EQcentres = X
     EQweights = alpha[:,0]
+    #print("EQweights:")
+    #print(EQweights)
 
 
     #initialise the hypercubes with one spanning cubesize (and another 0-width one
@@ -426,19 +444,22 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridre
 
     #check all these path segments, get the maximum bound from all these.
     maxval = -np.inf
-    print("Checking Segments...")
+    #print("Checking Segments...")
     for it,seg in enumerate(unique_pathsegments):
-        print("\n%d/%d" % (it,len(unique_pathsegments)),end="")
+        #print("\n%d/%d" % (it,len(unique_pathsegments)),end="")
         if len(seg)==1: #if it's just one segment (don't iterate over, instead use the innerchanges - as we'll just be moving within this cube).
+            #print("len(seg)==1")
             b = getbound(EQcentres,hypercube_starts[seg[0]],hypercube_ends[seg[0]],diff_dim,ls,v,innerchanges[seg[0],:],gridres=gridres,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
+            #print(b)
         else: #otherwise we need to combine the relevant start, mid and end parts
               #e.g. 0->1->3, add the starts from 0, the mids from 1 and the ends for 3.
+            #print("len(seg)>1")
             search_hypercube_start = np.full_like(hypercube_starts[0],-np.inf)
             search_hypercube_end = np.full_like(hypercube_ends[0],np.inf)
             cube_diff_dim_start = np.inf
             cube_diff_dim_end = -np.inf
             for s in seg:
-                print(".",end="")
+                #print(".",end="")
                 search_hypercube_start = np.max(np.array([search_hypercube_start,hypercube_starts[s]]),0)
                 search_hypercube_end = np.min(np.array([search_hypercube_end,hypercube_ends[s]]),0)
                 
@@ -449,15 +470,21 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridre
             
             #not sure if this should happen! TODO.
             if np.any(search_hypercube_start>=search_hypercube_end):
-                print(search_hypercube_start,search_hypercube_end)
-                print("start>end")
+                #print(search_hypercube_start,search_hypercube_end)
+                print("PROBLEM! start>end")
                 b = 0
             else: #we add together the starts, mids and ends, and treat it as a d-1 dimensional
                   #mixture of gaussians problem.
+                #print("Adding together:")
+                #print(startchanges[seg[0],:], np.sum(midchanges[seg[1:-1],:],0), endchanges[seg[-1],:])
                 changes = startchanges[seg[0],:] + np.sum(midchanges[seg[1:-1],:],0) + endchanges[seg[-1],:]
+                #print("Sums:")
+                #print(changes)
+                #print("at:")
+                #print(EQcentres)
                 b = getbound(EQcentres,search_hypercube_start,search_hypercube_end,diff_dim,ls,v,changes,gridres=gridres,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
-                
-        print(seg,b)
+        #print("seg,b")    
+        #print(seg,b)
         if b>maxval:
             maxval = b
             maxseg = seg
@@ -467,6 +494,7 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridre
     return maxval, hypercube_starts, hypercube_ends, maxseg, EQweights
     
 def testing():
+    import numpy as np
     """Testing various methods.
     overlap       - tested
     splitcubes    - tested
@@ -535,6 +563,10 @@ def testing():
     assert forwardpaths == [[1],[],[],[2]]
     assert backwardpaths == [[],[0],[3],[]]
     
+    
+    ############test zeromean_gaussian_1d#############
+    from boundmixofgaussians import zeromean_gaussian_1d
+    assert zeromean_gaussian_1d(x=1.5,ls=3.0,v=0.5)==0.5*np.exp(-0.5*1.5**2/3.0**2)
     ############test getchanges############
     EQcentres = np.array([[-1,0],[-1,1]])
     EQweights = np.array([1.0,1.0])
@@ -606,7 +638,7 @@ def testing():
     hypercube_ends = np.array([[4,4]])
     d = 0
     ls = 2.0
-    v = 3.0
+    v = 0.2
 
     startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres=0.2)
 
@@ -625,7 +657,7 @@ def testing():
     hypercube_ends = np.array([[4,3]])
     d = 1
     ls = 2.0
-    v = 3.0
+    v = 0.9
 
     startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres=0.2)
 
@@ -643,8 +675,8 @@ def testing():
     hypercube_ends = np.array([[4,3]])
     d = 1
     ls = 2.0
-    v = 3.0
-
+    v = 0.3
+    
     startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres=0.2)
 
     startchanges, midchanges, endchanges, innerchanges
@@ -664,3 +696,40 @@ def testing():
     assert getallpaths([[1,2],[2],[3,4,5],[],[6],[],[]])==[[0, 1, 2, 3],[0, 1, 2, 4, 6],[0, 1, 2, 5],[0, 2, 3],[0, 2, 4, 6],[0, 2, 5]]
     print("All tests successful!")
     
+    
+    ############test compute_full_bound############
+    import numpy as np
+    from GPAdversarialBound import compute_full_bound
+
+    X = np.array([[0.0,1.0,2.0],[1.0,1.0,1.0]]).T
+    Y = np.array([[0.0,1.0,1.0]]).T
+    sigma = 0.2
+    ls = 0.5
+    v = 0.5
+    diff_dim = 0
+    dims = 2
+    cubesize = 2.0
+    splitcount=1
+    gridres = 1000
+    dimthreshold=3
+    bound, hypercube_starts, hypercube_ends, maxseg, EQweights = compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=splitcount,gridres=gridres,dimthreshold=dimthreshold)
+   
+    import GPy
+    m = GPy.models.GPRegression(X,Y)
+    m.kern.lengthscale = ls
+    m.kern.variance = v
+    m.Gaussian_noise = sigma**2
+
+    cov0 = v#
+    cov1 = v*np.exp(-.5/ls**2)
+    cov2 = v*np.exp(-.5*2**2/ls**2)
+    #sanity check our covariance matrix!
+    covmat = np.array([[cov0,cov1,cov2],[cov1,cov0,cov1],[cov2,cov1,cov0]])
+    assert np.all(m.kern.K(X)==covmat)
+    covmat+=np.eye(3)*sigma**2
+    alpha = np.linalg.inv(covmat) @ Y #K^-1
+    testbound = -alpha[0]*(cov0-cov2)+alpha[1]*(cov0-cov1)+alpha[2]*(cov0-cov2) 
+    #the test bound is the actual peak (we are able to find this as we know exactly where it is!)
+    #the bound from the method is estimated by evaluting a grid over the gaussians.
+    #they should be similar:
+    assert np.abs(testbound - bound)<1e-3
