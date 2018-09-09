@@ -377,7 +377,7 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridre
     #and the 'alpha' weights in 'EQweights'
     
     if K is None: #compute it ourselves,
-        print("K is not set, computing")
+        #print("K is not set, computing")
         K = np.empty([len(X),len(X)])
         for i in range(len(X)):
             K[i,:] = zeromean_gaussian(X-X[i,:],ls=ls,v=v) #using this function for the EQ RBF
@@ -409,7 +409,7 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridre
 
 
     #split up the hypercubes a bit (need to make this more intelligent, e.g. not just split the middle)
-    print("Splitting...")
+    #print("Splitting...")
     wholecubechanges = None
     wholecubecounts = None 
     for splitit in range(splitcount):
@@ -421,15 +421,16 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridre
         startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,diff_dim,ls,v,gridres,logistic_transform)
 
 
+    print("Number of cubes: %d" % len(hypercube_starts))
     #get all the straightline paths (in the direction we're differentiating) from the start and end of the hypercube
     #e.g. hypercube 0->1->3 and 0->2
     paths = getallpaths(forwardpaths)
 
-
+    print("Number of paths: %d" % len(paths))
     
     #get all the segments paths. so 0->1->3 & 0->2 has 8 possible inside paths:
     #0, 1, 3, 0->1, 0->1->3, 1->3, 0, 2, 0->2
-    print("Computing Paths...")
+    #print("Computing Paths...")
     pathsegments = []
     for p in paths:
         for start in range(1,len(p)):
@@ -437,15 +438,20 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridre
             for end in range(start+1,len(p)):
                 pathsegments.append(p[start:end+1])
 
-
+    print("Number of path segment sequences: %d" % len(pathsegments))
+    
     #just keep unique sequences so we don't test them twice            
     unique_pathsegments = [list(x) for x in set(tuple(x) for x in pathsegments)]
 
-
+    print("Number of unique path segment sequences: %d" % len(unique_pathsegments))
+    
     #check all these path segments, get the maximum bound from all these.
     maxval = -np.inf
+    maxseg = None
     #print("Checking Segments...")
     for it,seg in enumerate(unique_pathsegments):
+        if it%1000==0: print("%d/%d" % (it,len(unique_pathsegments)))
+
         #print("\n%d/%d" % (it,len(unique_pathsegments)),end="")
         if len(seg)==1: #if it's just one segment (don't iterate over, instead use the innerchanges - as we'll just be moving within this cube).
             #print("len(seg)==1")
@@ -471,7 +477,8 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridre
             #not sure if this should happen! TODO.
             if np.any(search_hypercube_start>=search_hypercube_end):
                 #print(search_hypercube_start,search_hypercube_end)
-                print("PROBLEM! start>end")
+                if np.any(search_hypercube_start>search_hypercube_end):
+                    print("PROBLEM! start>end")
                 b = 0
             else: #we add together the starts, mids and ends, and treat it as a d-1 dimensional
                   #mixture of gaussians problem.
@@ -490,7 +497,7 @@ def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridre
             maxseg = seg
             
             
-            
+    print("Done")        
     return maxval, hypercube_starts, hypercube_ends, maxseg, EQweights
     
 def testing():
