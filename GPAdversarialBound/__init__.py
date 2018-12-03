@@ -175,7 +175,7 @@ def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v):
     innerchange[innerchange<0] = 0
     #middle cube: we're interested in the total change from start to end
     midchange = endvals - startvals #negative values can be left in this
-  
+    #print(startvals,midvals,endvals)
     return startchange, midchange, endchange, innerchange
 
 def sig(z):
@@ -224,7 +224,7 @@ def getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,l
     return boundgrad
     
 
-def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres,logistic_transform=False):
+def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,logistic_transform=False): #removed gridres from parameters
     """
     Basically computes the startchanges, midchanges, endchanges, innerchanges for
     all the hypercubes. We also compute wholecubechanges and wholecubecount
@@ -262,7 +262,7 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gri
         #New code for handling conversion to classification
         if logistic_transform:
             assert False, "needs testing"
-            logisticgradbound = getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,ls,v,gridres=gridres)
+            ###logisticgradbound = getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,ls,v,gridres=gridres)
             #print("LOGISTIC TRANSFORM BOUND: %0.4f" % logisticgradbound)
             startchange *= logisticgradbound
             midchange *= logisticgradbound
@@ -331,8 +331,15 @@ def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,v,change,gridres=10,fu
     hc_start_not_d = np.delete(hypercube_start,d)
     hc_end_not_d = np.delete(hypercube_end,d)
     if np.all(hc_start_not_d==hc_end_not_d): return 0
-
-    return findbound(EQcentres_not_d,change,ls=ls,d=EQcentres_not_d.shape[1],gridres=gridres,gridstart=hc_start_not_d,gridend=hc_end_not_d,fulldim=fulldim,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
+    #print("Calling findbound...")
+    #print(hypercube_start,hypercube_end)
+    bound = findbound(EQcentres_not_d,change,ls=ls,d=EQcentres_not_d.shape[1],gridres=gridres,gridstart=hc_start_not_d,gridend=hc_end_not_d,fulldim=fulldim,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
+    #print("findbound call, start and end coordinates and Bound")
+    #print(hc_start_not_d,hc_end_not_d,"--->",bound)
+    #print("EQcentres & change values")
+    #print(EQcentres_not_d)
+    #print(change)
+    return bound
 
 def getallpaths(forwardpaths):    
     def getpaths(currentcube,path):
