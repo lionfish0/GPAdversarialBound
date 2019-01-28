@@ -12,4 +12,4 @@ You'll need the boundmixofgaussians module too, so run,
       
 ## Usage
 
-See <a href="https://github.com/lionfish0/GPAdversarialBound/blob/master/jupyter/New%20Version.ipynb">jupyter notebook</a> demo.
+See <a href="https://github.com/lionfish0/GPAdversarialBound/blob/master/jupyter/Full%20Sparse%20Version%20Demo.ipynb">jupyter notebook</a> demo.
