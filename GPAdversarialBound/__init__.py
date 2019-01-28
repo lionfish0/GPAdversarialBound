@@ -1,128 +1,11 @@
 import numpy as np
-from boundmixofgaussians import zeromean_gaussian_1d, zeromean_gaussian, findbound, PCA
-
-def overlap(hypercube_starts,hypercube_ends,splitcube_index,f,ignoredim=None):
-    """
-    Test whether a pair of hypercubes overlap
-    
-    hypercube_starts, hypercube_ends = arrays of hypercube corners
-    splitcube_index and f are the indices of the two cubes
-    ignoredim = a dimension that we'll delete.
-    
-    Example:
-        starts = [np.array([0,0]),np.array([1,0])]
-        ends = [np.array([1,1]),np.array([2,1])]
-        
-            overlap(starts,ends,0,1) 
-                returns False as the two squares don't overlap
-        
-        however
-        
-            overlap(starts,ends,0,1,0)
-                returns True as, ignoring the 0th dimension the two squares
-                do overlap.
-    """
-    s1 = hypercube_starts[f]
-    e1 = hypercube_ends[splitcube_index]
-    s2 = hypercube_starts[splitcube_index]
-    e2 = hypercube_ends[f]
-    if ignoredim is not None:
-        s1 = np.delete(s1,ignoredim)
-        e1 = np.delete(e1,ignoredim)
-        s2 = np.delete(s2,ignoredim)
-        e2 = np.delete(e2,ignoredim)
-    return np.all(s1<e1) and np.all(e2>s2)
-
-def splitcubes(hypercube_starts,hypercube_ends,forwardpaths,backwardpaths,splitcube_index,split_dim,diff_dim):
-    """Given a list of starts and ends of all cubes, splits a hypercube, updating
-    various lists.
-    
-    Note, the list of forward and backward paths through the cubes:
-    these are linked lists of orderings that one could take passing
-    from one cube to another along one axis (diff_dim).
-    
-    - forwardpaths and backwardpaths:
-        typically we'd create two hypercubes to start with, one that's zero width
-        and one that occupies the whole domain. This is just for convenience later.
-        
-        E.g. hypercube_starts = [[0,0],[0,0]]
-             hypercube_ends = [[0,5],[5,5]]
-             (diff_dim = 0)
-             
-             forwardpaths = [[1],[]]
-             backwardpaths = [[],[0]]
-        
-        The forwardspaths from the 0th cube is to the 1st cube. From the 1st cube
-        is to no where. The inverse is true of the backwardpaths.
-        
-        We have to keep track of forward and backward, so when splits happen we can
-        quickly step back to the cubes affected.
-    
-    - splitcube_index specifies the cube to split
-    
-    - split_dim = the dimension to split in
-    
-    - diff_dim = the direction we're keeping track of with the paths.
-    
-    NOTE: Manipulates matrices in place."""
-    start = hypercube_starts[splitcube_index]
-    end = hypercube_ends[splitcube_index]
-    splitpoint = (end[split_dim]+start[split_dim])/2
-    #if we're splitting in the direction we'll be building a path along
-    #(i.e. diff_dim) then we need to make the path longer,
-    #otherwise we need to add other paths.
-    if split_dim == diff_dim:
-        hypercube_starts.append(start.copy())
-        hypercube_starts[-1][split_dim] = splitpoint
-        hypercube_ends.append(end.copy())
-        hypercube_ends[splitcube_index][split_dim] = splitpoint
-        oldforwardpaths = forwardpaths.copy()
-        forwardpaths.append(forwardpaths[splitcube_index].copy())
-        forwardpaths[splitcube_index] = [len(forwardpaths)-1]
-        backwardpaths.append([splitcube_index])
-        for f in oldforwardpaths[splitcube_index]:
-            for i,b in enumerate(backwardpaths[f]):
-                if b==splitcube_index:
-                    backwardpaths[f][i] = len(oldforwardpaths)
-    else:
-        newindex = len(forwardpaths) #this will be the index of the new item
-        hypercube_starts.append(start.copy())
-        hypercube_starts[newindex][split_dim] = splitpoint
-        hypercube_ends.append(end.copy())
-        hypercube_ends[splitcube_index][split_dim] = splitpoint
-        
-        fps = forwardpaths[splitcube_index].copy()
-        forwardpaths[splitcube_index] = []
-        forwardpaths.append([])
-        
-        bps = backwardpaths[splitcube_index].copy()
-        backwardpaths[splitcube_index] = []
-        backwardpaths.append([])
-        
-        for f in fps:
-            backwardpaths[f].remove(splitcube_index)
-        for b in bps:
-            forwardpaths[b].remove(splitcube_index)
-         
-        #Splitting cube 'splitcube_index' (creating cube at 'newindex')
-        for f in fps: 
-            if overlap(hypercube_starts,hypercube_ends,splitcube_index,f,ignoredim=diff_dim):
-                forwardpaths[splitcube_index].append(f)
-                backwardpaths[f].append(splitcube_index)
-            if overlap(hypercube_starts,hypercube_ends,newindex,f,ignoredim=diff_dim):
-                forwardpaths[newindex].append(f)
-                backwardpaths[f].append(newindex)
-        for b in bps:
-
-            if overlap(hypercube_starts,hypercube_ends,splitcube_index,b,ignoredim=diff_dim):
-                backwardpaths[splitcube_index].append(b)
-                forwardpaths[b].append(splitcube_index)
-            if overlap(hypercube_starts,hypercube_ends,newindex,b,ignoredim=diff_dim):
-                backwardpaths[newindex].append(b)
-                forwardpaths[b].append(newindex)
-    assert len(forwardpaths)==len(backwardpaths)
-    assert len(forwardpaths)==len(hypercube_starts)
-    assert len(forwardpaths)==len(hypercube_ends)
+from boundmixofgaussians import zeromean_gaussian_1d, zeromean_gaussian, findbound, PCA, findpeak, compute_sum, compute_grad
+from scipy.optimize import minimize
+import GPy
+from itertools import combinations
+from time import time
+import itertools
+import bisect
 
 def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v):
     """
@@ -177,52 +60,6 @@ def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v):
     midchange = endvals - startvals #negative values can be left in this
     #print(startvals,midvals,endvals)
     return startchange, midchange, endchange, innerchange
-
-def sig(z):
-    """Logistic sigmoid function"""
-    return 1/(1+np.exp(-z))
-    
-def sig_grad(z):
-    """Gradient of the logistic sigmoid function"""
-    return sig(z)*(1-sig(z))    
-        
-def getlogisticgradientbound(EQcentres,EQweights,hypercube_start,hypercube_end,ls,v,gridres=10):
-    """
-        EQcentres = the training locations
-        EQweights = the weights of the Gaussians in the mixtures of gaussians (i.e. the alpha vector = k^-1 y)
-        hypercube_start,hypercube_end = hypercube corners
-        ls = lengthscale
-        gridcount = resolution of grid
-    
-    If we're doing classification then we need to find the change in the posterior, not the change in the 
-    latent function. To do this we need the absolute value of the function as the logistic's gradient
-    depends on it. However, we can't just transform the changes as this makes them non-gaussian etc.
-    
-    Instead we find a lower bound on how much the posterior changes wrt the latent function.
-    
-    To do that we consider the logistic function's derivative:  sigma_grad(z) = sigma(z)(1-sigma(z))
-    
-    We can find the largest value of z in the hypercube and the smallest (most negative).
-    If they're opposite signs then the steepest gradient in the hypercube is sigma_grad(0)
-    If not, then we find the smallest absolute value of both of them, and use that:
-                           sigma_grad(min(abs(minv),abs(maxv)))
-    
-    Returns a value that is the lower bound on the gradient
-    """
-    
-    if np.any(hypercube_start==hypercube_end): return 0.25 #handle any hypercubes that are flat
-    
-    maxv = findbound(EQcentres, EQweights, ls, EQcentres.shape[1], gridres, hypercube_start, hypercube_end)[0]
-    minv = -findbound(EQcentres, -EQweights, ls, EQcentres.shape[1], gridres, hypercube_start, hypercube_end)[0]
-
-    if np.sign(maxv)!=np.sign(minv):
-        boundgrad = sig_grad(0)
-    else:  
-        minval = min(np.abs(maxv),np.abs(minv))
-        boundgrad = sig_grad(minval)
-        
-    return boundgrad
-    
 
 def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,logistic_transform=False): #removed gridres from parameters
     """
@@ -341,409 +178,485 @@ def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,v,change,gridres=10,fu
     #print(change)
     return bound
 
-def getallpaths(forwardpaths):    
-    def getpaths(currentcube,path):
-        #global paths
-        newpath = path.copy()
-        newpath.append(currentcube)
-        if len(forwardpaths[currentcube])==0:
-            paths.append(newpath)
-        for f in forwardpaths[currentcube]:
-            getpaths(f,newpath)
+
+
+class AdversarialBoundException(Exception):
+    pass
+
+class NoAvailableDimensionsToSearch(AdversarialBoundException):
+    pass
+
+class AdversBound:
+    def __init__(self):
+        self.hires_debug = []
+        self.count_compute = 0
     
-    paths = []
-    getpaths(0,[])
-    return paths
-
-def compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=5,gridres=10,forceignorenegatives=False,dimthreshold=3,K=None,logistic_transform=False):
-    """
-    maxval, hypercube_starts, hypercube_ends, maxseg, EQweights = compute_full_bound(X,Y,sigma,ls,diff_dim,dims,cubesize,splitcount=5,gridres=5,forceignorenegatives=False,dimthreshold=3)
-
-    X,Y = training inputs and outputs.
-    sigma = standard deviation of noise.
-    ls,v = lengthscale and variance of RBF kernel
-    diff_dim = dimension over which we're interested in the bound on change in the posterior mean.
-    dims = number of dimensions, probably X.shape[1].
-    cubesize = either a scalar or a vector describing the size of the volume over which we're testing. E.g. if there are three inputs, one can range between 0 and 1 and the other two between 0 and 255, then this is a vector [1,255,255].
-    splitcount = number of times we split the space (you'll end up with this many hypercubes + 2)
-    gridres = the resolution used during the bound computation. This is the number of points along a hypercuboid's longest edge, so would (for a hypercube) lead to up to gridres^3 test points (e.g. 10^3=1000).
-    forceignorenegatives=False this is for testing to see effect on a low-dimensional training set of ignoring negatives (this is necessary anyway at higher dimensions as we use a low-dimensional PCA approximation to search for an upper bound over for the mixture of gaussians.
-    dimthreshold=3 more will potentially improve the bound but will be slower.
-    
-    returns:
-    maxval = the largest positive change in the direction of dimension 'diff_dim'.
-    hypercube_starts, hypercube_ends = corners of the hypercubes (shows how it's been split)
-    maxseg = the sequence of hypercubes that led to the largest change in the mean.
-    EQweights = the weights of the Gaussians in the mixtures of gaussians (i.e. the alpha vector = k^-1 y)
-    """
-    assert dims == X.shape[1]
-    
-    #First compute the representer-theorem equivalent of the GP mean function
-    # i.e. f = sum_i k(x_i,x_*) alpha_i
-    #save the training locations in EQcentres
-    #and the 'alpha' weights in 'EQweights'
-    
-    if K is None: #compute it ourselves,
-        #print("K is not set, computing")
-        K = np.empty([len(X),len(X)])
-        for i in range(len(X)):
-            K[i,:] = zeromean_gaussian(X-X[i,:],ls=ls,v=v) #using this function for the EQ RBF
-            
-    #print("K")
-    #print(K)
-    #print("(K+sigI)^-1")
-    #print(np.linalg.inv(K+np.eye(len(X))))
-    
-    alpha = np.linalg.inv(K+np.eye(len(X))*(sigma**2)) @ Y
-    #print("Alpha")
-    #print(alpha)
-    EQcentres = X
-    EQweights = alpha[:,0]
-    #print("EQweights:")
-    #print(EQweights)
-
-
-    #initialise the hypercubes with one spanning cubesize (and another 0-width one
-    #at the start of the search dimension).
-    hypercube_starts = [np.zeros(dims)*1.0,np.zeros(dims)*1.0]
-    if type(cubesize)==np.ndarray:
-        hypercube_ends = [cubesize.copy(),cubesize.copy()]
-    else:
-        hypercube_ends = [np.full(dims,cubesize)*1.0,np.full(dims,cubesize)*1.0]
-    hypercube_ends[0][diff_dim] = 0
-    forwardpaths = [[1],[]]
-    backwardpaths = [[],[0]]
-
-
-    #split up the hypercubes a bit (need to make this more intelligent, e.g. not just split the middle)
-    #print("Splitting...")
-    wholecubechanges = None
-    wholecubecounts = None 
-    for splitit in range(splitcount):
-        split_index = 1
-        if wholecubechanges is not None: #switched from using innerchanges to using wholecubechanges
-            split_index = np.argmax(wholecubechanges)
-        split_dim = np.argmax(hypercube_ends[split_index]-hypercube_starts[split_index])
-        splitcubes(hypercube_starts,hypercube_ends,forwardpaths,backwardpaths,split_index,split_dim,diff_dim)
-        startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,diff_dim,ls,v,gridres,logistic_transform)
-
-
-    print("Number of cubes: %d" % len(hypercube_starts))
-    #get all the straightline paths (in the direction we're differentiating) from the start and end of the hypercube
-    #e.g. hypercube 0->1->3 and 0->2
-    paths = getallpaths(forwardpaths)
-
-    print("Number of paths: %d" % len(paths))
-    
-    #get all the segments paths. so 0->1->3 & 0->2 has 8 possible inside paths:
-    #0, 1, 3, 0->1, 0->1->3, 1->3, 0, 2, 0->2
-    #print("Computing Paths...")
-    pathsegments = []
-    for p in paths:
-        for start in range(1,len(p)):
-            pathsegments.append([p[start]])
-            for end in range(start+1,len(p)):
-                pathsegments.append(p[start:end+1])
-
-    print("Number of path segment sequences: %d" % len(pathsegments))
-    
-    #just keep unique sequences so we don't test them twice            
-    unique_pathsegments = [list(x) for x in set(tuple(x) for x in pathsegments)]
-
-    print("Number of unique path segment sequences: %d" % len(unique_pathsegments))
-    
-    #check all these path segments, get the maximum bound from all these.
-    maxval = -np.inf
-    maxseg = None
-    #print("Checking Segments...")
-    for it,seg in enumerate(unique_pathsegments):
-        if it%1000==0: print("%d/%d" % (it,len(unique_pathsegments)))
-
-        #print("\n%d/%d" % (it,len(unique_pathsegments)),end="")
-        if len(seg)==1: #if it's just one segment (don't iterate over, instead use the innerchanges - as we'll just be moving within this cube).
-            #print("len(seg)==1")
-            b = getbound(EQcentres,hypercube_starts[seg[0]],hypercube_ends[seg[0]],diff_dim,ls,v,innerchanges[seg[0],:],gridres=gridres,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
-            #print(b)
-        else: #otherwise we need to combine the relevant start, mid and end parts
-              #e.g. 0->1->3, add the starts from 0, the mids from 1 and the ends for 3.
-            #print("len(seg)>1")
-            search_hypercube_start = np.full_like(hypercube_starts[0],-np.inf)
-            search_hypercube_end = np.full_like(hypercube_ends[0],np.inf)
-            cube_diff_dim_start = np.inf
-            cube_diff_dim_end = -np.inf
-            for s in seg:
-                #print(".",end="")
-                search_hypercube_start = np.max(np.array([search_hypercube_start,hypercube_starts[s]]),0)
-                search_hypercube_end = np.min(np.array([search_hypercube_end,hypercube_ends[s]]),0)
-                
-                cube_diff_dim_start = min(cube_diff_dim_start,hypercube_starts[s][int(diff_dim)])
-                cube_diff_dim_end = max(cube_diff_dim_end,hypercube_ends[s][int(diff_dim)])                
-            search_hypercube_start[int(diff_dim)] = cube_diff_dim_start
-            search_hypercube_end[int(diff_dim)] = cube_diff_dim_end
-            
-            #not sure if this should happen! TODO.
-            if np.any(search_hypercube_start>=search_hypercube_end):
-                #print(search_hypercube_start,search_hypercube_end)
-                if np.any(search_hypercube_start>search_hypercube_end):
-                    print("PROBLEM! start>end")
-                b = 0
-            else: #we add together the starts, mids and ends, and treat it as a d-1 dimensional
-                  #mixture of gaussians problem.
-                #print("Adding together:")
-                #print(startchanges[seg[0],:], np.sum(midchanges[seg[1:-1],:],0), endchanges[seg[-1],:])
-                changes = startchanges[seg[0],:] + np.sum(midchanges[seg[1:-1],:],0) + endchanges[seg[-1],:]
-                #print("Sums:")
-                #print(changes)
-                #print("at:")
-                #print(EQcentres)
-                b = getbound(EQcentres,search_hypercube_start,search_hypercube_end,diff_dim,ls,v,changes,gridres=gridres,fulldim=False,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
-        #print("seg,b")    
-        #print(seg,b)
-        if b>maxval:
-            maxval = b
-            maxseg = seg
-            
-            
-    print("Done")        
-    return maxval, hypercube_starts, hypercube_ends, maxseg, EQweights
-    
-def testing():
-    import numpy as np
-    """Testing various methods.
-    overlap       - tested
-    splitcubes    - tested
-    getchanges    - tested
-    getallchanges - tested
-    getbound      -(basically a wrapper for findbound from another module)
-    getallpaths   - tested
-    compute_full_bound - untested!
-    """
-    
-    ############test overlap############
-    hstarts = [np.array([0,2]),np.array([0,1]),np.array([3,0])]
-    hends = [np.array([3,4]),np.array([3,2]),np.array([4,4])]
-
-    #4._______
-    #3| . 0 | |
-    #2|_____|2|
-    #1. | 1 | |
-    #0. |___|_|
-    # 0 1 2 3 4
+    def duplicate(self,ab,boxstart,boxend,nsteps):
+        """
+        Copy the configuration etc from one adversarial bound object into another.
         
-    assert overlap(hstarts,hends,0,0)==True
-    assert overlap(hstarts,hends,1,1)==True
-    assert overlap(hstarts,hends,2,2)==True
-    assert overlap(hstarts,hends,0,1)==False
-    assert overlap(hstarts,hends,0,1,0)==False
-    assert overlap(hstarts,hends,0,1,1)==True
-    assert overlap(hstarts,hends,1,0,0)==False
-    assert overlap(hstarts,hends,1,0,1)==True
-    assert overlap(hstarts,hends,0,2,1)==False
-    assert overlap(hstarts,hends,0,2,0)==True
-    assert overlap(hstarts,hends,1,2,1)==False
-    assert overlap(hstarts,hends,1,2,0)==True
-    
-    ############test splitcubes############    
-    hstarts = [np.array([0,0])]
-    hends = [np.array([4,4])]
-    forwardpaths = [[]]
-    backwardpaths = [[]]
-    splitcube_index = 0
-    split_dim = 0
-    diff_dim = 0
-    splitcubes(hstarts,hends,forwardpaths,backwardpaths,splitcube_index,split_dim,diff_dim)
-    assert np.all(hstarts[0]==np.array([0,0]))
-    assert np.all(hends[0]==np.array([2,4]))
-    assert forwardpaths == [[1],[]]
-    assert backwardpaths == [[],[0]]
-    splitcube_index = 1
-    split_dim = 1
-    diff_dim = 0
-    splitcubes(hstarts,hends,forwardpaths,backwardpaths,splitcube_index,split_dim,diff_dim)
-    splitcube_index = 0
-    split_dim = 1
-    diff_dim = 0
-    splitcubes(hstarts,hends,forwardpaths,backwardpaths,splitcube_index,split_dim,diff_dim)
-    #print(hstarts,hends,forwardpaths,backwardpaths)
-    # ____________
-    #|     |     |
-    #|  3  |  2  |
-    #|_____|_____|
-    #|     |     |
-    #|  0  |  1  |
-    #|_____|_____|
-    #
-    #forward should be [[1],[],[],[2]] backward [[],[0],[3],[]]
-    assert forwardpaths == [[1],[],[],[2]]
-    assert backwardpaths == [[],[0],[3],[]]
-    
-    
-    ############test zeromean_gaussian_1d#############
-    from boundmixofgaussians import zeromean_gaussian_1d
-    assert zeromean_gaussian_1d(x=1.5,ls=3.0,v=0.5)==0.5*np.exp(-0.5*1.5**2/3.0**2)
-    ############test getchanges############
-    EQcentres = np.array([[-1,0],[-1,1]])
-    EQweights = np.array([1.0,1.0])
-    hypercube_start = np.array([0,0])
-    hypercube_end = np.array([4,4])
-    d = 0
-    ls = 2.0
-    v = 2.0
-    startchange, midchange, endchange, innerchange = getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v)
+        """
+        self.maxlist = ab.maxlist
+        self.EQcentres = ab.EQcentres.copy()
+        self.EQweights = ab.EQweights.copy()
+        self.ls = ab.ls
+        self.sigma = ab.sigma
+        self.dimthreshold = ab.dimthreshold
+        self.v = ab.v
+        self.nsteps = nsteps
+        self.dims = ab.dims
+        self.gridres = ab.gridres
+        self.initialise_hypercube_system(boxstart,boxend,nsteps)
+        
+    def configure(self,EQcentres,EQweights,ls,sigma,v,boxstart,boxend,nsteps,gridres,dimthreshold,maxlist=100):
+        """
+        nsteps = number of hypercubes along each axis.
+        gridres = resolution of searchgrid on inner call to boundmixofgaussians.
+        """
+        self.maxlist = maxlist
+        self.EQcentres = EQcentres
+        self.EQweights = EQweights
+        self.ls = ls
+        self.sigma = sigma
+        self.dimthreshold=dimthreshold
+        self.v = v
+        self.nsteps = nsteps
+        self.dims = EQcentres.shape[1]
+        self.gridres = gridres
+        self.initialise_hypercube_system(boxstart,boxend,nsteps)
+        
+    def initialise_hypercube_system(self,boxstart,boxend,nsteps):
+        self.startpositions = tuple([np.linspace(s,e,nstep+1)[0:-1] for s,e,nstep in zip(boxstart,boxend,nsteps)])
+        self.endpositions = tuple([np.linspace(s,e,nstep+1)[1:] for s,e,nstep in zip(boxstart,boxend,nsteps)])
+        self.hypercube_starts = np.array(list(itertools.product(*self.startpositions)))
+        self.hypercube_ends = np.array(list(itertools.product(*self.endpositions)))
+        
+        self.boxstart = boxstart
+        self.boxend = boxend
+        #print(K @ self.alpha)
+        
+        assert self.dims == self.EQcentres.shape[1]
+        
+        #startchanges = if this were a cube at the start of the path...
+        #midchanges = if this were a cube in the middle of the path...
+        #endchanges = if this were a cube at the end of the path...
+        #innerchanges = if the path is completely within this cube...
+        #...what is the largest increase (aligned with each training point)
+        #in each dimension?
+        self.startchanges = [None]*self.dims
+        self.midchanges = [None]*self.dims
+        self.endchanges = [None]*self.dims
+        self.innerchanges = [None]*self.dims
+        self.negstartchanges = [None]*self.dims
+        self.negmidchanges = [None]*self.dims
+        self.negendchanges = [None]*self.dims
+        self.neginnerchanges = [None]*self.dims
+        for d in range(self.dims):
+            self.startchanges[d], self.midchanges[d], self.endchanges[d], self.innerchanges[d], _, _ = getallchanges(self.EQcentres,self.EQweights,self.hypercube_starts,self.hypercube_ends,d,self.ls,self.v)
+            self.negstartchanges[d], self.negmidchanges[d], self.negendchanges[d], self.neginnerchanges[d], _, _ = getallchanges(self.EQcentres,-self.EQweights,self.hypercube_starts,self.hypercube_ends,d,self.ls,self.v)
 
+#    def splithypercube(c,d1,d2):
+#        startchanges[d], midchanges[d], endchanges[d], innerchanges[d], _, _ = getallchanges(self.EQcentres,self.EQweights,hypercube_starts,hypercube_ends,d,self.ls,self.v,gridres = 1)
+#        negstartchanges[d], negmidchanges[d], negendchanges[d], neginnerchanges[d], _, _ = getallchanges(self.EQcentres,-self.EQweights,hypercube_starts,hypercube_ends,d,self.ls,self.v,gridres = 1)
+            
+    def compute(self,depth,steps = None, availdims=None,availsteps = None, hires=1):
+        """
+        Compute upper bound on the change 'depth' perturbations can cause to the prediction.
+        
+        depth = number of dimensions to modify
+        steps = the steps that describe the starting location, e.g. [[]]
+        availdims = the dimensions one can modify at each depth, e.g. [[8],[0]] means that one can
+                    only move in the 8th dimension first, then along the 0th dimension.
+        availsteps = the 
+        
+        abhires.findtop([9, 0, 0, 0, 0, 0, 0, 0, 9],2,[[8],[0]],[[[],[],[],[],[],[],[],[],[0,1,2,3,4]],[[0,1,2,3,4],[],[],[],[],[],[],[],[]]])
+        """
+        
+        
+        if steps is None:
+            steps = tuple([np.arange(nstep) for nstep in self.nsteps])
+        if availdims is None:
+            availdims = list(range(self.dims))
+        biggestb = 0
+        sequences = []
+        sequence_bounds = []
+        
+        #print("computing first pass:")
+        for c in itertools.product(*steps):
+            #print(">",end="")
+            #if hires==1:
+                #print(c,availdims,availsteps)
+            seqs, seqbs = self.findtop(list(c),depth,availdims,availsteps)
+            for seqb, seq in zip(seqbs,seqs):
+                #print(seqb,seq)
+                seq.insert(0,[c])
+                idx = bisect.bisect(sequence_bounds,seqb)
+                sequences.insert(idx,seq)
+                sequence_bounds.insert(idx,seqb) 
+            if len(sequence_bounds)>self.maxlist:
+                sequence_bounds = sequence_bounds[-self.maxlist:]
+                sequences = sequences[-self.maxlist:]
+        #print("first pass complete")
+        if hires>1:
+            #print("computing high res pass...")
+            hires_bounds = [] #sequence_bounds.copy()
+            
+            for seqs in sequences:
+                hires_seq_bounds, highres_seqs = self.compute_high_res_bound(depth,seqs,scaling=hires)
+                
+                hires_bounds.append(hires_seq_bounds[-1])
+                
+            hires_bounds = np.array(hires_bounds)
+            #print("high res pass complete")
+            #print("WARNING: The hires_bounds must also include the lowest bound from the normal sequence_bounds")
+        else:
+            hires_bounds = None
+        #print("done")
+        return sequence_bounds, sequences, hires_bounds
 
-    #startchange: if this was a starting cube, starting at 0, with a peak at -1, it can't increase over the cube so we use zero
-    assert np.all(startchange == 0)
-    from boundmixofgaussians import zeromean_gaussian_1d, zeromean_gaussian, findbound, PCA
-    #midchange: if it's a middle cube, we integrate over the whole of the cube
-    assert np.all(midchange == zeromean_gaussian_1d(5,2,2)-zeromean_gaussian_1d(1,2,2))
-    #similar to startchange, if it's the last cube, the whole function has a negative gradient over the cube, so
-    #the largest value is zero.
-    assert np.all(endchange == 0)
-    #as above, for changes that start and end within the cube
-    assert np.all(innerchange == 0)
+    def get_index_of_cell(self,cell):
+        index = 0
+        for ns,sc in zip(self.nsteps,cell):
+            index = (index*ns)+sc
+        return index
+        
+    def compute_indexes_of_line(self,startcell,endcell,d):
+        """
+        Compute the indices 
+        """
+        #confirm the coordinates only differ by the dimension we are purported to
+        #be moving in.
+        
+        assert np.all(endcell<self.nsteps), "endcell outside of range of possible numbers of steps"
+        assert np.all(startcell<self.nsteps), "startcell outside of range of possible numbers of steps"
+        assert np.all(np.array(startcell)>=0), "startcell outside of range of possible numbers of steps"
+        assert np.all(np.array(endcell)>=0), "endcell outside of range of possible numbers of steps"
+        
+        for i,x in enumerate(np.array(startcell)-np.array(endcell)):
+            if i!=d:
+                assert x==0
 
-    EQcentres = np.array([[1,0],[2,0],[3,0],[3,2]])
-    EQweights = np.array([1.0,1.0,1.0,-1.0])
-    hypercube_start = np.array([0,0])
-    hypercube_end = np.array([4,4])
-    d = 0
-    ls = 2.0
-    v = 0.5
-    startchange, midchange, endchange, innerchange = getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v)
-
-    #if we are starting in this cube, then, (for a centre at x=1) although there's a +ve gradient from 0 to 1,
-    #there's more negative on the far side, so it's "best" to start on the boundary
-    #for a centre at x=2, the positive and negative cancel.
-    #for a centre at x=3, there's an overall increase in the function
-
-    assert startchange[0] == 0
-    assert startchange[1] == 0
-    assert startchange[2] == zeromean_gaussian_1d(1,2,0.5)-zeromean_gaussian_1d(3,2,0.5)
-
-    #for a centre at x=3, with negative weight, the largest increase is for x=3 to x=4. (as it goes from negative to less-negative)
-    assert startchange[3]==v-zeromean_gaussian_1d(1,2,0.5)
-
-    #midchange: 0th one should be negative, as its left boundary is higher than its right (as the peak is more
-    #to the left). 1st is zero (as the values at the two boundaries are equal). 2nd is positive. 3rd is like the
-    #0th but inverted & flipped.
-    assert midchange[0] == zeromean_gaussian_1d(3,2,0.5)-zeromean_gaussian_1d(1,2,0.5)
-    assert midchange[1] == 0
-    assert midchange[2] == -(zeromean_gaussian_1d(3,2,0.5)-zeromean_gaussian_1d(1,2,0.5))
-    assert midchange[3] == (zeromean_gaussian_1d(3,2,0.5)-zeromean_gaussian_1d(1,2,0.5))
-
-    #endchange
-    #0th: will be the change from zeromean_gaussian_1d(0,2)-zeromean_gaussian_1d(1,2)
-    assert endchange[0] == v-zeromean_gaussian_1d(1,2,0.5)
-    assert endchange[1] == v-zeromean_gaussian_1d(2,2,0.5)
-    assert endchange[2] == v-zeromean_gaussian_1d(3,2,0.5)
-    assert endchange[3] == 0
-
-    #innerchange
-    assert innerchange[0] == v-zeromean_gaussian_1d(1,2,0.5)
-    assert innerchange[1] == v-zeromean_gaussian_1d(2,2,0.5)
-    assert innerchange[2] == v-zeromean_gaussian_1d(3,2,0.5)
-    assert innerchange[3] == v-zeromean_gaussian_1d(1,2,0.5)
-
-    ############test getallchanges############
-    EQcentres = np.array([[1,0],[2,0],[3,0],[3,2]])
-    EQweights = np.array([1.0,1.0,1.0,-1.0])
-    hypercube_starts = np.array([[0,0]])
-    hypercube_ends = np.array([[4,4]])
-    d = 0
-    ls = 2.0
-    v = 0.2
-
-    startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres=0.2)
-
-    startchanges, midchanges, endchanges, innerchanges
-
-    assert np.all(startchanges == np.array([0, 0, zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(3,2,v), v-zeromean_gaussian_1d(1,2,v)]))
-    assert np.all(midchanges == np.array([zeromean_gaussian_1d(3,2,v)-zeromean_gaussian_1d(1,2,v),0, -(zeromean_gaussian_1d(3,2,v)-zeromean_gaussian_1d(1,2,v)),(zeromean_gaussian_1d(3,2,v)-zeromean_gaussian_1d(1,2,v))]))
-    assert np.all(endchanges==np.array([v-zeromean_gaussian_1d(1,2,v),v-zeromean_gaussian_1d(2,2,v),v-zeromean_gaussian_1d(3,2,v),0])), (np.array([v-zeromean_gaussian_1d(1,2,v),v-zeromean_gaussian_1d(2,2,v),v-zeromean_gaussian_1d(3,2,v),0]),endchange)
-    assert np.all(innerchanges==np.array([v-zeromean_gaussian_1d(1,2,v),v-zeromean_gaussian_1d(2,2,v),
-                                         v-zeromean_gaussian_1d(3,2,v),v-zeromean_gaussian_1d(1,2,v)]))
-
-    ############test getallchanges (out of box), d=1############
-    EQcentres = np.array([[0,1],[2,4]])
-    EQweights = np.array([1.0,-1.0])
-    hypercube_starts = np.array([[0,2]])
-    hypercube_ends = np.array([[4,3]])
-    d = 1
-    ls = 2.0
-    v = 0.9
-
-    startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres=0.2)
-
-    startchanges, midchanges, endchanges, innerchanges
-
-    assert np.all(startchanges == np.array([0,0]))
-    assert np.all(midchanges == np.array([zeromean_gaussian_1d(2,2,v)-zeromean_gaussian_1d(1,2,v), zeromean_gaussian_1d(2,2,v)-zeromean_gaussian_1d(1,2,v)]))
-    assert np.all(endchanges==np.array([0,0]))
-    assert np.all(innerchanges==np.array([0,0]))
-    
-    ############test getallchanges again (out of box), d=1############
-    EQcentres = np.array([[0,1],[2,4]])
-    EQweights = np.array([-1.0,1.0])
-    hypercube_starts = np.array([[0,2]])
-    hypercube_ends = np.array([[4,3]])
-    d = 1
-    ls = 2.0
-    v = 0.3
-    
-    startchanges, midchanges, endchanges, innerchanges,wholecubechanges,wholecubecounts = getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,gridres=0.2)
-
-    startchanges, midchanges, endchanges, innerchanges
-
-    assert np.all(startchanges == np.array([zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v), zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v)]))
-    assert np.all(midchanges == np.array([zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v), zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v)]))
-    assert np.all(endchanges==np.array([zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v), zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v)]))
-    assert np.all(innerchanges==np.array([zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v), zeromean_gaussian_1d(1,2,v)-zeromean_gaussian_1d(2,2,v)]))
-    ############test getallpaths############
-    
-    #0->1 & 2
-    #   1-> 2
-    #       2->3 4 5
-    #            4->6
-    #so the paths are:
-    #0123,01246,0125,023,0246,025
-    assert getallpaths([[1,2],[2],[3,4,5],[],[6],[],[]])==[[0, 1, 2, 3],[0, 1, 2, 4, 6],[0, 1, 2, 5],[0, 2, 3],[0, 2, 4, 6],[0, 2, 5]]
-    print("All tests successful!")
+        startindex = self.get_index_of_cell(startcell)
+        endindex = self.get_index_of_cell(endcell)
+        if endindex>startindex:
+            res = np.arange(startindex,endindex+1,int(np.prod(self.nsteps[d+1:])))
+        else:
+            res = np.arange(startindex,endindex-1,-int(np.prod(self.nsteps[d+1:])))
+        
+        assert np.all(res<np.prod(self.nsteps)), "Cell outside valid range of indices"
+        assert np.all(res>=0)
+        return res
     
     
-    ############test compute_full_bound############
-    import numpy as np
-    from GPAdversarialBound import compute_full_bound
+    def compute_bound(self,idx,d,positive,include_start=True,include_end=True):
+        """
+        idx = list of indicies of cells in the path
+        d = dimension we're moving along (along path)
+        positive = whether to use the changes computed for the normal training
+          values of 'y' or their negatives. This flip allows us to consider
+          the paths in the opposite direction
+        include_start/include_end = whether to incorporate the start cell and end cell, or just compute up to the boundary
+          
+          TODO: As we consider both directions like this we don't need steps being in both directions cover this?"""
+        self.count_compute+=1
+        if positive:
+            innerchange = self.innerchanges
+            startchange = self.startchanges
+            midchange = self.midchanges
+            endchange = self.endchanges
+        else:
+            innerchange = self.neginnerchanges
+            startchange = self.negstartchanges
+            midchange = self.negmidchanges
+            endchange = self.negendchanges
 
-    X = np.array([[0.0,1.0,2.0],[1.0,1.0,1.0]]).T
-    Y = np.array([[0.0,1.0,1.0]]).T
-    sigma = 0.2
-    ls = 0.5
-    v = 0.5
-    diff_dim = 0
-    dims = 2
-    cubesize = 2.0
-    splitcount=1
-    gridres = 1000
-    dimthreshold=3
-    bound, hypercube_starts, hypercube_ends, maxseg, EQweights = compute_full_bound(X,Y,sigma,ls,v,diff_dim,dims,cubesize,splitcount=splitcount,gridres=gridres,dimthreshold=dimthreshold)
-   
-    import GPy
-    m = GPy.models.GPRegression(X,Y)
-    m.kern.lengthscale = ls
-    m.kern.variance = v
-    m.Gaussian_noise = sigma**2
+        #pass list of indices
+        #if only one cell exists, we just compute the innerchanges, otherwise we need to add up all the influences
+        idx = np.sort(idx)
+        #print("Hypercube corners")
+        #print(self.hypercube_starts[idx[0]],self.hypercube_ends[idx[-1]])
+        if len(idx)==1:
+            if include_start and include_end:
+                changes = innerchange[d][idx[0],:]
+                #b = getbound(self.EQcentres,self.hypercube_starts[idx[0]],self.hypercube_ends[idx[0]],d,self.ls,self.v,,gridres=self.gridres,dimthreshold=self.dimthreshold)
+            else:
+                if not include_start:
+                    changes = endchange[d][idx[0],:]
+                if not include_end:
+                    changes = startchange[d][idx[0],:]
+                if not include_start and not include_end:
+                    changes = midchange[d][idx[0],:]
+        else: #if len(idx)>1:
+            if include_start and include_end:
+                changes = startchange[d][idx[0],:] + np.sum(midchange[d][idx[1:-1],:],0) + endchange[d][idx[-1],:]
+            if not include_start:
+                changes = np.sum(midchange[d][idx[0:-1],:],0) + endchange[d][idx[-1],:]
+            if not include_end:
+                changes = startchange[d][idx[0],:] + np.sum(midchange[d][idx[1:],:],0)
+            if not include_start and not include_end:
+                changes = np.sum(midchange[d][idx,:],0)
+        b = getbound(self.EQcentres,self.hypercube_starts[idx[0]],self.hypercube_ends[idx[-1]],d,self.ls,self.v,changes,gridres=self.gridres,dimthreshold=self.dimthreshold)
+        return b
 
-    cov0 = v#
-    cov1 = v*np.exp(-.5/ls**2)
-    cov2 = v*np.exp(-.5*2**2/ls**2)
-    #sanity check our covariance matrix!
-    covmat = np.array([[cov0,cov1,cov2],[cov1,cov0,cov1],[cov2,cov1,cov0]])
-    assert np.all(m.kern.K(X)==covmat)
-    covmat+=np.eye(3)*sigma**2
-    alpha = np.linalg.inv(covmat) @ Y #K^-1
-    testbound = -alpha[0]*(cov0-cov2)+alpha[1]*(cov0-cov1)+alpha[2]*(cov0-cov2) 
-    #the test bound is the actual peak (we are able to find this as we know exactly where it is!)
-    #the bound from the method is estimated by evaluting a grid over the gaussians.
-    #they should be similar:
-    assert np.abs(testbound - bound)<1e-3
+    def findtop(self,c,depth,availdims,availsteps = None):
+        """
+        Finds the largest sum of bounds from cell c, with depth number of steps
+        availdims specifies the directions we are still able to go in.
+        
+        availdims = this can either just be a straightforward list of dimensions [0,1,2,3]
+                    or can be a list of lists, which specifies the dimensions that are available to take
+                    at each step [[0,1],[2,3]]
+        availsteps = if availsteps is not specified then we just use the object's nsteps list
+                     to get the number of steps that we should split this dimension (d) into.
+                     If it is specified, then each iteration of the recursion can have a
+                     different number of steps for each dimension.
+                     E.g. availsteps = [[[3,1],[1,3]],[[3],[3]]]
+                     this means in the first recursive step the two dimensions can each have 3 steps to test
+                     in the second iteration each dimension only gets one step to test
+                    
+        """
+        #print("   "*(2-depth),'findtop(',"c=",c,",depth=",depth,",availdims=",availdims,",availsteps=",availsteps,')')
+        sequences = []
+        sequence_bounds = []
+        
+        if len(availdims)<1:
+            raise NoAvailableDimensionsToSearch
+                    
+        #we can pass a list of available dims to use at each recursive step
+        if isinstance(availdims[0],list):
+            availdim = availdims[0]
+        else:
+            availdim = availdims
+
+        if len(availdim)<1:
+            raise NoAvailableDimensionsToSearch
+        
+        
+        for i,d in enumerate(availdim): #loop over the available dimensions we can take
+            
+            #if we're given a list of lists, then the next recursive step should be given the remaining lists
+            #otherwise we've just been given a list of dimensions. We only need to search the (i+1)th dimension
+            #and onwards, as we don't need to test both 0->1->2 and 0->2->1, etc.
+            
+            if isinstance(availdims[0],list): 
+                newavaildims = availdims[1:]
+            else:
+                newavaildims = availdims[i+1:]
+                #if there are fewer available dimensions to travel down than depth of search
+                #we should stop, as we can't fulfill this.                
+                if len(newavaildims)<depth-1: 
+                    break
+                    #print(len(newavaildims),depth-1)            
+            
+            #if availsteps is not specified then we just use the object's nsteps list to get the number of steps
+            #that we should split this dimension (d) into. If it is specified, then each iteration of the recursion
+            #can have a different number of steps for each dimension.
+            if availsteps is None:
+                steps = np.arange(self.nsteps[d])
+                newavailsteps = None
+            else:
+                steps = availsteps[0][d]
+                newavailsteps = availsteps[1:]
+            
+            #For each step (in dimension d)
+            for x in steps:
+                #create new cell location at destination
+                newc = c.copy()
+                newc[d]=x
+                #so now e.g. c = [1,2,3], newc = [1,5,3], d = 1
+                pathindicies = self.compute_indexes_of_line(c,newc,d)
+                #print("   "*(2-depth),pathindicies)
+                if x==c[d]: #we need to check both positive and negative directions inside same hypercube
+                    stepbound = max(self.compute_bound(pathindicies,d,True),self.compute_bound(pathindicies,d,False))
+                else:
+                    stepbound = self.compute_bound(pathindicies,d,x>=c[d])
+                if depth>1:
+                    seqs, seq_bounds = self.findtop(newc,depth-1,newavaildims,newavailsteps)
+                else:
+                    seqs = [[]]
+                    seq_bounds = [0]
+
+                for j in range(len(seq_bounds)):
+                    #print(".",end="")
+                    seq_bounds[j] = seq_bounds[j]+stepbound
+                    seqs[j].insert(0,[newc,stepbound,d])
+                    
+                    idx = bisect.bisect(sequence_bounds,seq_bounds[j])
+                    sequences.insert(idx,seqs[j])
+                    sequence_bounds.insert(idx,seq_bounds[j])
+                #keeps list a reasonable size
+                if len(sequence_bounds)>self.maxlist:
+                    sequence_bounds = sequence_bounds[-self.maxlist:]
+                    sequences = sequences[-self.maxlist:]
+                    
+        return sequences, sequence_bounds
+
+    def compute_high_res_bound(self,depth,sequence,scaling=4):
+        starts = []
+        ends = []
+        changingdims = []
+        changingsteps = []
+
+
+        #we want to find the bounds of this path, typically this will
+        #be in a low-dimensional manifold as depth<<dims
+        #
+        #for each depth stage of the sequence, we look up the hypercube, and 
+        #also take a note of the dimension it travels in and the number of steps
+        #after this we have four variables:
+        # changingdims = list of dimensions that are travelled down, in order
+        # changingsteps = list of the step index we reach along each dimension
+        # boxstart = starting coordinate of hypercube we're pathing over..
+        # boxend = ending coordinate of hypercube
+        for seq in sequence:
+            #we get the index of the starting cell
+            index = self.compute_indexes_of_line(list(seq[0]),list(seq[0]),0)
+            if len(seq)>2:
+                changingdims.append(seq[2])
+                changingsteps.append(seq[0][seq[2]])
+            starts.append(self.hypercube_starts[index][0])
+            ends.append(self.hypercube_ends[index][0])
+        boxstart = np.min(np.array(starts),0)
+        boxend = np.max(np.array(ends),0)
+
+        #for now we expand those dimensions that we are searching over the whole
+        #of the original domain - this is for computational simplicity, as it means
+        #we can be assured that there are a whole number of hires cuboids inside
+        #each original hypercuboid, etc.
+        for d in changingdims:
+            boxstart[d]=0
+            boxend[d]=self.boxend[d]
+
+        abhires = AdversBound()
+
+        nsteps = [1]*self.dims
+        for d in changingdims: nsteps[d] = self.nsteps[d]*scaling
+        abhires.duplicate(self,boxstart,boxend,nsteps)
+        abhires.gridres=self.gridres
+        abhires.dimthreshold=self.dimthreshold
+
+        startsteps = [[0]]*self.dims
+        startcell = np.array(sequence[0][0])
+        for d in changingdims: startsteps[d] = list(np.arange(startcell[d]*scaling,(startcell[d]*scaling)+scaling))
+
+        availsteps = []
+        for d,s in zip(changingdims,changingsteps):
+            part_availsteps = [[]]*self.dims
+            part_availsteps[d]=list(np.arange(s*scaling,s*scaling+scaling))
+            availsteps.append(part_availsteps)
+        availdims = [[d] for d in changingdims]
+        
+        
+        hires_sequence_bounds, hires_sequences, _ = abhires.compute(depth,startsteps,availdims,availsteps)
+        self.hires_debug.append({'abhires':abhires,'depth':depth,'startsteps':startsteps,'availdims':availdims,'availsteps':availsteps,'hires_sequence_bounds':hires_sequence_bounds, 'hires_sequences':hires_sequences})
+        return hires_sequence_bounds, hires_sequences
+    
+    def compute_empirical_lowerbound(self,depth,N=100000):
+        maxchange = 0
+        for it in range(50):
+            ps = np.random.rand(int(N/50),self.dims)
+            newps = ps.copy()
+            for d in range(depth):
+                newps[:,np.random.randint(dims)] = np.random.rand(int(N/50))
+            for p,newp in zip(ps,newps):
+                r = self.EQweights @ zeromean_gaussian(self.EQcentres-p,self.ls,self.v)
+                newr = self.EQweights @ zeromean_gaussian(self.EQcentres-newp,self.ls,self.v)
+                maxchange = max(maxchange,np.abs(newr-r))
+        return maxchange
+    
+    def compute_CI(self,CI=0.95):
+        outputs = []
+        for x in self.EQcentres:
+            r = self.EQweights @ zeromean_gaussian(self.EQcentres-x,self.ls,self.v)
+            outputs.append(r)
+        outputs=np.sort(np.array(outputs))
+        top = outputs[int(len(outputs)*CI)]
+        bottom = outputs[int(len(outputs)*(1-CI))]
+        return bottom,top
+
+
+
+
+def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_dim,gridres=50,dimthreshold=2,enhance=None):
+    """
+    Xtrain,Ytrain = training data (classification)
+    
+    sparse = None if not sparse otherwise a number for number of inducing points
+    ls,v = lengthscale and variance of kernel
+    
+    sigma = Gaussian noise (should really be zero for standard GP Classification)
+    nstep_per_dim = how much to divide up each dimension
+    gridres, dimthreshold = parameters for bound approximation.
+    enhance = tuple of (nstep_per_dim, num_iterations) [set to None for no enhance]
+    """
+    if sparse is None:
+        sparse=False
+    else:
+        assert isinstance(sparse, int)
+
+    dims = Xtrain.shape[1]
+    boxstart = [0.0]*dims
+    boxend = [1.0]*dims
+
+    m = GPy.models.GPClassification(Xtrain,Ytrain)
+    m.inference_method = GPy.inference.latent_function_inference.Laplace()
+    m.kern.lengthscale.fix(ls)
+    m.kern.variance.constrain_bounded(v,v+1e-4)
+    m.optimize()
+
+    if sparse:
+        K = m.kern.K(Xtrain,Xtrain)
+        alpha = np.linalg.inv(K+np.eye(len(Xtrain))*(sigma**2)) @ m.inference_method.f_hat[:,0] #Ytrain[:,0]
+        sparsem = GPy.models.SparseGPRegression(Xtrain,alpha[:,None],num_inducing=sparse) #todo chose number of inducing inputs
+        sparsem.kern.lengthscale.fix(ls)
+        sparsem.kern.variance.constrain_bounded(v,v+1e-4)
+        sparsem.optimize()
+        Z = np.array(sparsem.Z.tolist())
+        Kuf = m.kern.K(Z,Xtrain)
+        Kuu = m.kern.K(Z,Z)
+        Sigma = np.linalg.inv((sigma**-2)*Kuf@Kuf.T + Kuu)
+        alpha = (sigma**-2)*Sigma @ Kuf @ m.inference_method.f_hat[:,0]
+        abXs = Z
+    else:
+        K = m.kern.K(Xtrain,Xtrain)
+        alpha = np.linalg.inv(K+np.eye(len(Xtrain))*(sigma**2)) @ m.inference_method.f_hat[:,0] #Ytrain[:,0]
+        abXs = Xtrain
+        sparsem = None
+
+    blocks = [[i,i+1] for i in range(0,dims,2)]
+    blocks[-1]=[i for i in blocks[-1] if i<dims]
+        
+    results = []
+    for combo in combinations(blocks,depth):
+        combo_block = []
+        for c in combo: combo_block.extend(c)
+        nsteps = [1]*dims
+        for b in combo_block: nsteps[b]=nstep_per_dim
+
+        ab = AdversBound()
+        ab.configure(abXs,alpha,ls,sigma,v,boxstart,boxend,nsteps,gridres,dimthreshold)
+
+        res = ab.compute(depth,hires=1,availdims=combo_block)
+        results.append(res)
+    
+    if enhance is not None:
+        new_nstep_per_dim=enhance[0]
+        for it in range(enhance[1]):#TODO
+            i = np.argmax([np.max(res[0]) for res in results])
+            combo=list(combinations(blocks,depth))[i]
+            combo_block = []
+            for c in combo: combo_block.extend(c)
+            nsteps = [1]*dims
+            for b in combo_block: nsteps[b]=new_nstep_per_dim
+
+            ab = AdversBound()
+            ab.configure(abXs,alpha,ls,sigma,v,boxstart,boxend,nsteps,gridres,dimthreshold)
+            newres = ab.compute(depth,hires=1,availdims=combo_block)
+            print("%0.4f --> %0.4f" % (np.max(results[i][0]),np.max(newres[0])))
+            results[i] = newres
+            new_bounds = np.array([np.max(res[0]) for res in results])
+            print("%0.4f %0.4f %0.4f" % (np.min(new_bounds),np.mean(new_bounds),np.max(new_bounds)))
+
+    accuracy = (np.mean(((m.kern.K(Xtest,abXs)@alpha)>0.5)==(Ytest[:,0]>0)))
+    return results, m, sparsem, accuracy
+    #all_results.append([nstp,np.max([np.max(res[0]) for res in results]),end-start])
