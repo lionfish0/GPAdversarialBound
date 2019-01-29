@@ -7,6 +7,7 @@ You'll need the boundmixofgaussians module too, so run,
 
       pip install git+https://github.com/lionfish0/hypercuboid_integrator.git
       pip install git+https://github.com/lionfish0/boundmixofgaussians.git
+      pip install git+https://github.com/lionfish0/GPAdversarialDatasets.git
       git clone https://github.com/lionfish0/GPAdversarialBound.git
       cd GPAdversarialBound
       pip install -e .
