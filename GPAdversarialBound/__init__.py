@@ -658,5 +658,5 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
             print("%0.4f %0.4f %0.4f" % (np.min(new_bounds),np.mean(new_bounds),np.max(new_bounds)))
 
     accuracy = (np.mean(((m.kern.K(Xtest,abXs)@alpha)>0.5)==(Ytest[:,0]>0)))
-    return results, m, sparsem, accuracy
+    return results, m, sparsem, accuracy, ab.compute_CI()
     #all_results.append([nstp,np.max([np.max(res[0]) for res in results]),end-start])
