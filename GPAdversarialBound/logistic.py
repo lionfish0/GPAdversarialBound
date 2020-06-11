@@ -18,5 +18,9 @@ def get_logistic_result(Xtrain,Ytrain,Xtest,Ytest):
         s = np.sort(invlogi(clf.predict_proba(Xtrain)[:,1]))
         ci = s[int(len(s)*0.95)]-s[int(len(s)*0.05)]
         pixelsneeded = np.where(cumulativelatents>ci)[0][0]
-        result.append([C,score*100,cumulativelatents[0],cumulativelatents[1],cumulativelatents[2],cumulativelatents[3],cumulativelatents[4],ci,pixelsneeded])
+        if len(cumulativelatents)>3:
+            result.append([C,score*100,cumulativelatents[0],cumulativelatents[1],cumulativelatents[2],cumulativelatents[3],cumulativelatents[4],ci,pixelsneeded])
+        else:
+            result.append([C,score*100,cumulativelatents[0],cumulativelatents[1],cumulativelatents[2],cumulativelatents[3],ci,pixelsneeded])
+
     return result

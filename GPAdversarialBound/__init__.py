@@ -24,7 +24,7 @@ def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v):
     
     ls, v = lengthscale and variance of kernel
     
-    Importantly we want several results:
+    Importantly we want several results. It returns:
     
      startchange = the amount the function can change from a point on the starting plane
         of the hypercube, to any point in the hypercube (along the d axis)
@@ -148,6 +148,7 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,log
 #here we go through the combinations of starts and ends in this simple line of hypercubes
 def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,v,change,gridres=10,fulldim=False,forceignorenegatives=False,dimthreshold=3):
     """
+    
     EQcentres = training point locations
     hypercube_start,hypercube_end = corners of the hypercube
     d = dimension over which we flatten the search
@@ -156,29 +157,17 @@ def getbound(EQcentres,hypercube_start,hypercube_end,d,ls,v,change,gridres=10,fu
     gridres = the resolution of the search grid (default 10)
     fulldim= Over 3d the algorithm falls back to using a low-dimensional linear manifold to reduce the
      search grid volume. Set to True to over-ride this behaviour. Default=False
+     
+    Returns a bound on the peak of the potential increase within the hypercube specified by the
+     hypercube_start and hypercube_end parameters, along dimension d.
     """
-    #print("getbound:")
-    #print(EQcentres)
-    #print(hypercube_start,hypercube_end)
-    #print(d,ls,v)
-    #print(change)
-    #print(gridres)
-    #print(fulldim,forceignorenegatives,dimthreshold)
     EQcentres_not_d = np.delete(EQcentres,d,1)
     hc_start_not_d = np.delete(hypercube_start,d)
     hc_end_not_d = np.delete(hypercube_end,d)
     if np.all(hc_start_not_d==hc_end_not_d): return 0
-    #print("Calling findbound...")
-    #print(hypercube_start,hypercube_end)
     bound = findbound(EQcentres_not_d,change,ls=ls,d=EQcentres_not_d.shape[1],gridres=gridres,gridstart=hc_start_not_d,gridend=hc_end_not_d,fulldim=fulldim,forceignorenegatives=forceignorenegatives,dimthreshold=dimthreshold)
-    #print("findbound call, start and end coordinates and Bound")
-    #print(hc_start_not_d,hc_end_not_d,"--->",bound)
-    #print("EQcentres & change values")
-    #print(EQcentres_not_d)
-    #print(change)
+
     return bound
-
-
 
 class AdversarialBoundException(Exception):
     pass
@@ -194,7 +183,6 @@ class AdversBound:
     def duplicate(self,ab,boxstart,boxend,nsteps):
         """
         Copy the configuration etc from one adversarial bound object into another.
-        
         """
         self.maxlist = ab.maxlist
         self.EQcentres = ab.EQcentres.copy()
@@ -226,6 +214,9 @@ class AdversBound:
         self.initialise_hypercube_system(boxstart,boxend,nsteps)
         
     def initialise_hypercube_system(self,boxstart,boxend,nsteps):
+        """
+        Sets up the hypercubes, computes the amount of change within each hypercube for each type of movement.
+        """
         self.startpositions = tuple([np.linspace(s,e,nstep+1)[0:-1] for s,e,nstep in zip(boxstart,boxend,nsteps)])
         self.endpositions = tuple([np.linspace(s,e,nstep+1)[1:] for s,e,nstep in zip(boxstart,boxend,nsteps)])
         self.hypercube_starts = np.array(list(itertools.product(*self.startpositions)))
@@ -255,10 +246,6 @@ class AdversBound:
             self.startchanges[d], self.midchanges[d], self.endchanges[d], self.innerchanges[d], _, _ = getallchanges(self.EQcentres,self.EQweights,self.hypercube_starts,self.hypercube_ends,d,self.ls,self.v)
             self.negstartchanges[d], self.negmidchanges[d], self.negendchanges[d], self.neginnerchanges[d], _, _ = getallchanges(self.EQcentres,-self.EQweights,self.hypercube_starts,self.hypercube_ends,d,self.ls,self.v)
 
-#    def splithypercube(c,d1,d2):
-#        startchanges[d], midchanges[d], endchanges[d], innerchanges[d], _, _ = getallchanges(self.EQcentres,self.EQweights,hypercube_starts,hypercube_ends,d,self.ls,self.v,gridres = 1)
-#        negstartchanges[d], negmidchanges[d], negendchanges[d], neginnerchanges[d], _, _ = getallchanges(self.EQcentres,-self.EQweights,hypercube_starts,hypercube_ends,d,self.ls,self.v,gridres = 1)
-            
     def compute(self,depth,steps = None, availdims=None,availsteps = None, hires=1):
         """
         Compute upper bound on the change 'depth' perturbations can cause to the prediction.
@@ -267,7 +254,17 @@ class AdversBound:
         steps = the steps that describe the starting location, e.g. [[]]
         availdims = the dimensions one can modify at each depth, e.g. [[8],[0]] means that one can
                     only move in the 8th dimension first, then along the 0th dimension.
-        availsteps = the 
+                    This can either just be a straightforward list of dimensions [0,1,2,3]
+                    or can be a list of lists, which specifies the dimensions that are available to take
+                    at each step [[0,1],[2,3]]
+        availsteps = if availsteps is not specified then we just use the object's nsteps list
+                     to get the number of steps that we should split this dimension (d) into.
+                     If it is specified, then each iteration of the recursion can have a
+                     different number of steps for each dimension.
+                     E.g. availsteps = [[[3,1],[1,3]],[[3],[3]]]
+                     this means in the first recursive step the two dimensions can each have 3 steps to test
+                     in the second iteration each dimension only gets one step to test
+       
         
         abhires.findtop([9, 0, 0, 0, 0, 0, 0, 0, 9],2,[[8],[0]],[[[],[],[],[],[],[],[],[],[0,1,2,3,4]],[[0,1,2,3,4],[],[],[],[],[],[],[],[]]])
         """
@@ -281,11 +278,7 @@ class AdversBound:
         sequences = []
         sequence_bounds = []
         
-        #print("computing first pass:")
         for c in itertools.product(*steps):
-            #print(">",end="")
-            #if hires==1:
-                #print(c,availdims,availsteps)
             seqs, seqbs = self.findtop(list(c),depth,availdims,availsteps)
             for seqb, seq in zip(seqbs,seqs):
                 #print(seqb,seq)
@@ -296,19 +289,15 @@ class AdversBound:
             if len(sequence_bounds)>self.maxlist:
                 sequence_bounds = sequence_bounds[-self.maxlist:]
                 sequences = sequences[-self.maxlist:]
-        #print("first pass complete")
-        if hires>1:
-            #print("computing high res pass...")
-            hires_bounds = [] #sequence_bounds.copy()
-            
+        if hires>1: #this basically isn't used any more.
+            print("USING HIRES: THIS IS DEPRECATED")
+            hires_bounds = []
             for seqs in sequences:
                 hires_seq_bounds, highres_seqs = self.compute_high_res_bound(depth,seqs,scaling=hires)
                 
                 hires_bounds.append(hires_seq_bounds[-1])
                 
             hires_bounds = np.array(hires_bounds)
-            #print("high res pass complete")
-            #print("WARNING: The hires_bounds must also include the lowest bound from the normal sequence_bounds")
         else:
             hires_bounds = None
         #print("done")
@@ -408,11 +397,15 @@ class AdversBound:
                     at each step [[0,1],[2,3]]
         availsteps = if availsteps is not specified then we just use the object's nsteps list
                      to get the number of steps that we should split this dimension (d) into.
+                     (note that this allows us to have a different number of steps still for each
+                     dimension as this is a list).
                      If it is specified, then each iteration of the recursion can have a
                      different number of steps for each dimension.
                      E.g. availsteps = [[[3,1],[1,3]],[[3],[3]]]
                      this means in the first recursive step the two dimensions can each have 3 steps to test
-                     in the second iteration each dimension only gets one step to test
+                     in the second iteration each dimension only gets one step to test.
+                     
+        returns:
                     
         """
         #print("   "*(2-depth),'findtop(',"c=",c,",depth=",depth,",availdims=",availdims,",availsteps=",availsteps,')')
@@ -588,6 +581,19 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
     nstep_per_dim = how much to divide up each dimension
     gridres, dimthreshold = parameters for bound approximation.
     enhance = tuple of (nstep_per_dim, num_iterations) [set to None for no enhance]
+    
+    Returns:
+     results,
+        this contains a list of each of the dimension combinations that can be taken,
+        e.g. a 6 dimensional grid with depth of 2 has 15 combinations:
+        [0,1],[0,2]...[1,2],[1,3]...[2,3]...[3,4]...[4,5] = 5+4+3+2+1
+        each item contains a tuple of three thing:
+        sequence_bounds = the values for each path for that dimension combination.
+        With a gridres of two, and a depth of 2, there are 16 combinations:
+        A-A-A, A-A-B, A-A-C, A-B-B, A-B-D, A-C-C, A-C-D, B-B-B, B-B-D, B-D-D, B-D-C, C-C-C, C-C-D, C-D-D, D-D-D, C-D-B.? 
+        sequences contains the details,
+        hires_bounds - unused.
+        The first is just
     """
     if sparse is None:
         sparse=False
@@ -598,6 +604,10 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
     boxstart = [0.0]*dims
     boxend = [1.0]*dims
 
+    print("Xtrain.shape:")
+    print(Xtrain.shape)
+
+    ####TODO THIS ISN'T FAST ENOUGH WHEN WE NEED IT SPARSE
     m = GPy.models.GPClassification(Xtrain,Ytrain)
     m.inference_method = GPy.inference.latent_function_inference.Laplace()
     m.kern.lengthscale.fix(ls)
@@ -605,6 +615,7 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
     m.optimize()
 
     if sparse:
+        print("Sparse...")
         K = m.kern.K(Xtrain,Xtrain)
         alpha = np.linalg.inv(K+np.eye(len(Xtrain))*(sigma**2)) @ m.inference_method.f_hat[:,0] #Ytrain[:,0]
         sparsem = GPy.models.SparseGPRegression(Xtrain,alpha[:,None],num_inducing=sparse) #todo chose number of inducing inputs
@@ -618,30 +629,44 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
         alpha = (sigma**-2)*Sigma @ Kuf @ m.inference_method.f_hat[:,0]
         abXs = Z
     else:
+        print("not sparse...")
+        m = GPy.models.GPClassification(Xtrain,Ytrain)
+        m.inference_method = GPy.inference.latent_function_inference.Laplace()
+        m.kern.lengthscale.fix(ls)
+        m.kern.variance.constrain_bounded(v,v+1e-4)
+        m.optimize()
         K = m.kern.K(Xtrain,Xtrain)
         alpha = np.linalg.inv(K+np.eye(len(Xtrain))*(sigma**2)) @ m.inference_method.f_hat[:,0] #Ytrain[:,0]
         abXs = Xtrain
         sparsem = None
 
-    blocks = [[i,i+1] for i in range(0,dims,2)]
-    blocks[-1]=[i for i in blocks[-1] if i<dims]
-        
+    #This didn't make it faster!
+    #blocks = [[i,i+1] for i in range(0,dims,2)]
+    #blocks[-1]=[i for i in blocks[-1] if i<dims]
+    blocks = [[i] for i in range(dims)] 
+    print("Starting...")
     results = []
+    print(blocks)
     for combo in combinations(blocks,depth):
+        print(".",end="",flush=True)
         combo_block = []
         for c in combo: combo_block.extend(c)
         nsteps = [1]*dims
         for b in combo_block: nsteps[b]=nstep_per_dim
-
         ab = AdversBound()
         ab.configure(abXs,alpha,ls,sigma,v,boxstart,boxend,nsteps,gridres,dimthreshold)
-
+        print(combo_block)
         res = ab.compute(depth,hires=1,availdims=combo_block)
-        results.append(res)
-    
+        results.append([res[0]]) ###SAVING SPACE, instead of saving all of res
+#        results.append(res)
+    print("Done")
     if enhance is not None:
+        print("Enhancing...")
         new_nstep_per_dim=enhance[0]
-        for it in range(enhance[1]):#TODO
+        import time
+        for it in range(enhance[1]):
+            start = time.time()
+            print(".",end="",flush=True)
             i = np.argmax([np.max(res[0]) for res in results])
             combo=list(combinations(blocks,depth))[i]
             combo_block = []
@@ -653,10 +678,22 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
             ab.configure(abXs,alpha,ls,sigma,v,boxstart,boxend,nsteps,gridres,dimthreshold)
             newres = ab.compute(depth,hires=1,availdims=combo_block)
             print("%0.4f --> %0.4f" % (np.max(results[i][0]),np.max(newres[0])))
-            results[i] = newres
+            end = time.time()
+            if (end>start+1000):
+               print("Excessive time, aborting enhancement")
+               break
+
+            if (np.max(results[i][0])<=np.max(newres[0])):
+               print("Insufficient improvement")
+               print("Increasing step count:")
+               new_nstep_per_dim+=1
+               print(new_nstep_per_dim)
+            results[i] = [newres[0]] ###SAVING SPACE, instead of saving all of newres
             new_bounds = np.array([np.max(res[0]) for res in results])
             print("%0.4f %0.4f %0.4f" % (np.min(new_bounds),np.mean(new_bounds),np.max(new_bounds)))
 
     accuracy = (np.mean(((m.kern.K(Xtest,abXs)@alpha)>0.5)==(Ytest[:,0]>0)))
+    print("Done.")
+    print("accuracy: %0.2f" % accuracy)
     return results, m, sparsem, accuracy, ab.compute_CI()
     #all_results.append([nstp,np.max([np.max(res[0]) for res in results]),end-start])
