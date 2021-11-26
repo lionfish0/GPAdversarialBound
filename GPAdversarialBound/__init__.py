@@ -15,9 +15,9 @@ def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v):
     what are the bounds on the greatest changes to the peak of each gaussian, in
     the sum of weighted Gaussians specified by EQcentres and EQweights. For example
     if we have a square from [0,0] to [1,1], and just one EQcentres at [0.5,0.5] of
-    weight 2, if the gaussian equals 1 at [0,0.5] & [1,0.5], then the startchange will equal 1
+    weight 2, if the gaussian equals 1 at [0,0.5] & [1,0.5], then the endchange will equal 1
     midchange will equal 0 (as over the whole square the mean hasn't changed), and
-    0 at endchange (this is an upper bound, and so although it could be negative, it
+    0 at startchange (this is an upper bound, and so although it could be negative, it
     can't be positive). innerchange will equal 1 (going from 0 to 0.5).
     
     d = dimension we're looking at changing over, and ls = lengthscale.
@@ -26,12 +26,12 @@ def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v):
     
     Importantly we want several results. It returns:
     
-     startchange = the amount the function can change from a point on the starting plane
+     endchange = the amount the function can change from a point on the starting plane
         of the hypercube, to any point in the hypercube (along the d axis)
     
      midchange = the change over the whole width of the hypercube (along the d axis)
     
-     endchange = the amount the function can change from any point in the hypercube to
+     startchange = the amount the function can change from any point in the hypercube to
         a point on the endplane (along the d axis)
     
      innerchange = the amount the function can change /within/ the hypercube (along the d axis)
@@ -58,6 +58,74 @@ def getchanges(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v):
     innerchange[innerchange<0] = 0
     #middle cube: we're interested in the total change from start to end
     midchange = endvals - startvals #negative values can be left in this
+    #print(startvals,midvals,endvals)
+    return startchange, midchange, endchange, innerchange
+    
+    
+def getchangesTwoWeights(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v):
+    """
+    startchange, midchange, endchange, innerchange = getchangesTwoWeights(EQcentres, EQweights, hypercube_start, hypercube_end, d, ls, v)
+   
+    Given a hypercube, specified by hypercube_start and hypercube_end
+    what are the bounds on the greatest changes to the peak of each gaussian, in
+    the sum of weighted Gaussians specified by EQcentres and EQweights.
+    
+    EQweights in this case is a tuple of two items: an upper weight and a lower,
+    the change reported here looks at moving from the lower weight to the upper one.
+    
+    For example
+    if we have a square from [0,0] to [1,1], and just one EQcentres at [0.5,0.5] of
+    weights [2,1], if the upper gaussian equals 1 at [0,0.5] & [1,0.5] and the lower
+    gaussian equals 0.5 at [0,0.5] & [1.0.5], then the startchange will equal 0.5
+    midchange will equal 0.5, and 1.5 at endchange (this is an upper bound,
+    and so although it could be negative, it can't be positive). 
+    innerchange will equal 1.5 (going from location 0 to 0.5).
+    
+    d = dimension we're looking at changing over, and ls = lengthscale.
+    
+    ls, v = lengthscale and variance of kernel
+    
+    Importantly we want several results. It returns:
+    
+     endchange = the amount the function can change from a point on the starting plane
+        of the hypercube, to any point in the hypercube (along the d axis)
+    
+     midchange = the change over the whole width of the hypercube (along the d axis)
+    
+     startchange = the amount the function can change from any point in the hypercube to
+        a point on the endplane (along the d axis)
+    
+     innerchange = the amount the function can change /within/ the hypercube (along the d axis)
+     """
+    
+    #get the highest and lowest values of an EQ between the start and end, along dimension d
+    #print("EQweights",EQweights)
+    startvals = EQweights*zeromean_gaussian_1d(EQcentres[:,d]-hypercube_start[d],ls,v )
+    endvals = EQweights*zeromean_gaussian_1d(EQcentres[:,d]-hypercube_end[d],ls, v)
+
+    #if the peak is inside the cube we keep the peak weight, otherwise it's not of interest
+    midvals = EQweights.copy()*v
+    #print("!!")
+    #print(EQcentres, EQweights)
+    #print(".>>")
+    #print("startvals:",startvals,"midvals:",midvals,"endvals:",endvals)    
+    midvals[:,(EQcentres[:,d]<hypercube_start[d]) | (EQcentres[:,d]>hypercube_end[d])] = np.nan
+    #print(midvals)
+    #print("S",startvals,"\nM",midvals,"\nE",endvals)
+    #print(startvals.shape,midvals.shape,endvals.shape)
+    #starting cube: we're interested in the biggest increase possible from any location to the end of the hypercube
+    #this is bound by the change from the values at the start to the values at the end
+    startchange = np.nanmax(np.array([endvals[1,:] - startvals[0,:],endvals[1,:]-midvals[0,:]]),0)
+    startchange[startchange<0] = 0
+
+    #ending cube: we're interested in the biggest increase possible from the start to anywhere inside
+    endchange = np.nanmax(np.array([midvals[1,:] - startvals[0,:],endvals[1,:] - startvals[0,:]]),0)
+    endchange[endchange<0] = 0
+    #print(np.array([midvals[1,:] - startvals[0,:],endvals[1,:]-midvals[0,:],endvals[1,:]-startvals[0,:]]))
+    innerchange = np.nanmax(np.array([midvals[1,:] - startvals[0,:],endvals[1,:]-midvals[0,:],endvals[1,:]-startvals[0,:]]),0)
+    innerchange[innerchange<0] = 0
+    #middle cube: we're interested in the total change from start to end
+    midchange = endvals[1,:] - startvals[0,:] #negative values can be left in this
     #print(startvals,midvals,endvals)
     return startchange, midchange, endchange, innerchange
 
@@ -94,7 +162,7 @@ def getallchanges(EQcentres,EQweights,hypercube_starts,hypercube_ends,d,ls,v,log
     for hypercube_start, hypercube_end in zip(hypercube_starts,hypercube_ends):
         assert hypercube_start.shape[0]==EQcentres.shape[1], "The number of columns in EQcentres should be equal to the dimensions in the hypercube."
         assert hypercube_end.shape[0]==EQcentres.shape[1], "The number of columns in EQcentres should be equal to the dimensions in the hypercube."
-        startchange, midchange, endchange, innerchange = getchanges(EQcentres,EQweights,hypercube_start,hypercube_end,d,ls,v)
+        startchange, midchange, endchange, innerchange = getchangesTwoWeights(EQcentres,EQweights,hypercube_start,hypercube_end,d,ls,v)
         
         #New code for handling conversion to classification
         if logistic_transform:
@@ -196,7 +264,7 @@ class AdversBound:
         self.gridres = ab.gridres
         self.initialise_hypercube_system(boxstart,boxend,nsteps)
         
-    def configure(self,EQcentres,EQweights,ls,sigma,v,boxstart,boxend,nsteps,gridres,dimthreshold,maxlist=100):
+    def configure(self,EQcentres,EQweights,ls,sigma,v,boxstart,boxend,nsteps,gridres,k,dimthreshold,maxlist=100):
         """
         nsteps = number of hypercubes along each axis.
         gridres = resolution of searchgrid on inner call to boundmixofgaussians.
@@ -211,6 +279,7 @@ class AdversBound:
         self.nsteps = nsteps
         self.dims = EQcentres.shape[1]
         self.gridres = gridres
+        self.k = k
         self.initialise_hypercube_system(boxstart,boxend,nsteps)
         
     def initialise_hypercube_system(self,boxstart,boxend,nsteps):
@@ -234,17 +303,64 @@ class AdversBound:
         #innerchanges = if the path is completely within this cube...
         #...what is the largest increase (aligned with each training point)
         #in each dimension?
-        self.startchanges = [None]*self.dims
-        self.midchanges = [None]*self.dims
-        self.endchanges = [None]*self.dims
-        self.innerchanges = [None]*self.dims
-        self.negstartchanges = [None]*self.dims
-        self.negmidchanges = [None]*self.dims
-        self.negendchanges = [None]*self.dims
-        self.neginnerchanges = [None]*self.dims
-        for d in range(self.dims):
-            self.startchanges[d], self.midchanges[d], self.endchanges[d], self.innerchanges[d], _, _ = getallchanges(self.EQcentres,self.EQweights,self.hypercube_starts,self.hypercube_ends,d,self.ls,self.v)
-            self.negstartchanges[d], self.negmidchanges[d], self.negendchanges[d], self.neginnerchanges[d], _, _ = getallchanges(self.EQcentres,-self.EQweights,self.hypercube_starts,self.hypercube_ends,d,self.ls,self.v)
+        
+        
+        #TODO We've switched from Nones to 0s. Hope this is ok...
+        self.startchanges = [0]*self.dims
+        self.midchanges = [0]*self.dims
+        self.endchanges = [0]*self.dims
+        self.innerchanges = [0]*self.dims
+        self.negstartchanges = [0]*self.dims
+        self.negmidchanges = [0]*self.dims
+        self.negendchanges = [0]*self.dims
+        self.neginnerchanges = [0]*self.dims
+        
+        
+        
+        #for d in range(self.dims):
+        #    self.startchanges[d], self.midchanges[d], self.endchanges[d], self.innerchanges[d], _, _ = getallchanges(self.EQcentres,self.EQweights,self.hypercube_starts,self.hypercube_ends,d,self.ls,self.v)
+        #    self.negstartchanges[d], self.negmidchanges[d], self.negendchanges[d], self.neginnerchanges[d], _, _ = getallchanges(self.EQcentres,-self.EQweights,self.hypercube_starts,self.hypercube_ends,d,self.ls,self.v)
+        
+        ###
+        #if EQ kernel...
+        #
+        
+        #for a unit kernel... (it is scaled later)
+                #A)build list of lengthscales and weights
+        if type(self.k)==GPy.kern.RBF:
+
+            apprx_ls = np.array([1.0]) #the lengthscales of the list of approximating kernels
+            apprx_ws = np.array([[1.0],[1.0]])        
+        if type(self.k)==GPy.kern.Exponential:
+            apprx_ls = np.array([1.0]) #the lengthscales of the list of approximating kernels
+            apprx_ws = np.array([[1.1],[0.9]])
+             
+        ###
+        #if not EQ kernel...
+        #
+        
+        
+        #B)loop over these...
+        for l,w in zip(apprx_ls,apprx_ws.T):
+            print(l,w)
+        
+            #C)make startchanges etc sum over these...
+            for d in range(self.dims):
+                                
+                newWs = np.array([w[0]*self.EQweights,w[1]*self.EQweights])
+                sc,mc,ec,ic,_,_ = getallchanges(self.EQcentres,newWs,self.hypercube_starts,self.hypercube_ends,d,l*self.ls,self.v)
+                self.startchanges[d]+=sc
+                self.midchanges[d]+=mc
+                self.endchanges[d]+=ec
+                self.innerchanges[d]+=ic
+                 
+                newWs = np.array([-w[0]*self.EQweights,-w[1]*self.EQweights])
+                sc,mc,ec,ic, _, _ = getallchanges(self.EQcentres,newWs,self.hypercube_starts,self.hypercube_ends,d,l*self.ls,self.v)
+                self.negstartchanges[d]+=sc
+                self.negmidchanges[d]+=mc
+                self.negendchanges[d]+=ec
+                self.neginnerchanges[d]+=ic
+                
 
     def compute(self,depth,steps = None, availdims=None,availsteps = None, hires=1):
         """
@@ -281,7 +397,7 @@ class AdversBound:
         for c in itertools.product(*steps):
             seqs, seqbs = self.findtop(list(c),depth,availdims,availsteps)
             for seqb, seq in zip(seqbs,seqs):
-                #print(seqb,seq)
+                print(">>",seqb,seq)
                 seq.insert(0,[c])
                 idx = bisect.bisect(sequence_bounds,seqb)
                 sequences.insert(idx,seq)
@@ -545,6 +661,7 @@ class AdversBound:
         return hires_sequence_bounds, hires_sequences
     
     def compute_empirical_lowerbound(self,depth,N=100000):
+        assert False, "NEEDS TO DEPEND ON KERNEL"
         maxchange = 0
         for it in range(50):
             ps = np.random.rand(int(N/50),self.dims)
@@ -558,6 +675,7 @@ class AdversBound:
         return maxchange
     
     def compute_CI(self,CI=0.95):
+        assert False, "NEEDS TO DEPEND ON KERNEL"
         outputs = []
         for x in self.EQcentres:
             r = self.EQweights @ zeromean_gaussian(self.EQcentres-x,self.ls,self.v)
@@ -570,7 +688,7 @@ class AdversBound:
 
 
 
-def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_dim,gridres=50,dimthreshold=2,enhance=None):
+def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_dim,gridres=50,dimthreshold=2,enhance=None,k=None):
     """
     Xtrain,Ytrain = training data (classification)
     
@@ -608,7 +726,8 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
     print(Xtrain.shape)
 
     ####TODO THIS ISN'T FAST ENOUGH WHEN WE NEED IT SPARSE
-    m = GPy.models.GPClassification(Xtrain,Ytrain)
+    if k is None: k = GPy.kern.RBF(dims)
+    m = GPy.models.GPClassification(Xtrain,Ytrain,k)
     m.inference_method = GPy.inference.latent_function_inference.Laplace()
     m.kern.lengthscale.fix(ls)
     m.kern.variance.constrain_bounded(v,v+1e-4)
@@ -640,6 +759,7 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
         abXs = Xtrain
         sparsem = None
 
+
     #This didn't make it faster!
     #blocks = [[i,i+1] for i in range(0,dims,2)]
     #blocks[-1]=[i for i in blocks[-1] if i<dims]
@@ -654,7 +774,7 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
         nsteps = [1]*dims
         for b in combo_block: nsteps[b]=nstep_per_dim
         ab = AdversBound()
-        ab.configure(abXs,alpha,ls,sigma,v,boxstart,boxend,nsteps,gridres,dimthreshold)
+        ab.configure(abXs,alpha,ls,sigma,v,boxstart,boxend,nsteps,gridres,k,dimthreshold)
         print(combo_block)
         res = ab.compute(depth,hires=1,availdims=combo_block)
         results.append([res[0]]) ###SAVING SPACE, instead of saving all of res
@@ -675,7 +795,7 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
             for b in combo_block: nsteps[b]=new_nstep_per_dim
 
             ab = AdversBound()
-            ab.configure(abXs,alpha,ls,sigma,v,boxstart,boxend,nsteps,gridres,dimthreshold)
+            ab.configure(abXs,alpha,ls,sigma,v,boxstart,boxend,nsteps,gridres,k,dimthreshold)
             newres = ab.compute(depth,hires=1,availdims=combo_block)
             print("%0.4f --> %0.4f" % (np.max(results[i][0]),np.max(newres[0])))
             end = time.time()
