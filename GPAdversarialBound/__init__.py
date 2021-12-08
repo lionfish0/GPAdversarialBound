@@ -71,15 +71,15 @@ def getchangesTwoWeights(EQcentres, EQweights, hypercube_start, hypercube_end, d
     the sum of weighted Gaussians specified by EQcentres and EQweights.
     
     EQweights in this case is a tuple of two items: an upper weight and a lower,
-    the change reported here looks at moving from the lower weight to the upper one.
+    the change reported here is the LARGEST increase such that one picks the weight
+    that maximises this increase.
     
     For example
     if we have a square from [0,0] to [1,1], and just one EQcentres at [0.5,0.5] of
     weights [2,1], if the upper gaussian equals 1 at [0,0.5] & [1,0.5] and the lower
     gaussian equals 0.5 at [0,0.5] & [1.0.5], then the startchange will equal 0.5
-    midchange will equal 0.5, and 1.5 at endchange (this is an upper bound,
-    and so although it could be negative, it can't be positive). 
-    innerchange will equal 1.5 (going from location 0 to 0.5).
+    midchange will equal 0.5, and endchange 1.5. innerchange will equal 1.5
+    (going from location 0 to 0.5).
     
     d = dimension we're looking at changing over, and ls = lengthscale.
     
@@ -105,6 +105,12 @@ def getchangesTwoWeights(EQcentres, EQweights, hypercube_start, hypercube_end, d
 
     #if the peak is inside the cube we keep the peak weight, otherwise it's not of interest
     midvals = EQweights.copy()*v
+    
+    startvals = np.sort(startvals,axis=0)
+    endvals = np.sort(endvals,axis=0)
+    midvals = np.sort(midvals,axis=0)
+    
+    #print("startvals\n",startvals,"\nmidvals\n",midvals,"\nendvals\n",endvals)
     #print("!!")
     #print(EQcentres, EQweights)
     #print(".>>")
@@ -115,17 +121,17 @@ def getchangesTwoWeights(EQcentres, EQweights, hypercube_start, hypercube_end, d
     #print(startvals.shape,midvals.shape,endvals.shape)
     #starting cube: we're interested in the biggest increase possible from any location to the end of the hypercube
     #this is bound by the change from the values at the start to the values at the end
-    startchange = np.nanmax(np.array([endvals[1,:] - startvals[0,:],endvals[1,:]-midvals[0,:]]),0)
+    startchange = np.nanmax(np.array([endvals[0,:] - startvals[0,:],endvals[0,:]-midvals[0,:]]),0)
     startchange[startchange<0] = 0
 
     #ending cube: we're interested in the biggest increase possible from the start to anywhere inside
-    endchange = np.nanmax(np.array([midvals[1,:] - startvals[0,:],endvals[1,:] - startvals[0,:]]),0)
+    endchange = np.nanmax(np.array([midvals[1,:] - startvals[0,:],endvals[1,:] - startvals[0,:],startvals[1,:] - startvals[0,:]]),0)
     endchange[endchange<0] = 0
     #print(np.array([midvals[1,:] - startvals[0,:],endvals[1,:]-midvals[0,:],endvals[1,:]-startvals[0,:]]))
-    innerchange = np.nanmax(np.array([midvals[1,:] - startvals[0,:],endvals[1,:]-midvals[0,:],endvals[1,:]-startvals[0,:]]),0)
+    innerchange = np.nanmax(np.array([midvals[1,:] - startvals[0,:],endvals[1,:]-midvals[0,:],endvals[1,:]-startvals[0,:],endvals[1,:]-endvals[0,:],startvals[1,:]-startvals[0,:],midvals[1,:]-midvals[0,:]]),0)
     innerchange[innerchange<0] = 0
     #middle cube: we're interested in the total change from start to end
-    midchange = endvals[1,:] - startvals[0,:] #negative values can be left in this
+    midchange = endvals[0,:] - startvals[0,:] #negative values can be left in this
     #print(startvals,midvals,endvals)
     return startchange, midchange, endchange, innerchange
 
@@ -306,61 +312,52 @@ class AdversBound:
         
         
         #TODO We've switched from Nones to 0s. Hope this is ok...
-        self.startchanges = [0]*self.dims
-        self.midchanges = [0]*self.dims
-        self.endchanges = [0]*self.dims
-        self.innerchanges = [0]*self.dims
-        self.negstartchanges = [0]*self.dims
-        self.negmidchanges = [0]*self.dims
-        self.negendchanges = [0]*self.dims
-        self.neginnerchanges = [0]*self.dims
-        
-        
-        
-        #for d in range(self.dims):
-        #    self.startchanges[d], self.midchanges[d], self.endchanges[d], self.innerchanges[d], _, _ = getallchanges(self.EQcentres,self.EQweights,self.hypercube_starts,self.hypercube_ends,d,self.ls,self.v)
-        #    self.negstartchanges[d], self.negmidchanges[d], self.negendchanges[d], self.neginnerchanges[d], _, _ = getallchanges(self.EQcentres,-self.EQweights,self.hypercube_starts,self.hypercube_ends,d,self.ls,self.v)
-        
-        ###
-        #if EQ kernel...
-        #
-        
+        self.startchanges = [[] for _ in range(self.dims)]
+        self.midchanges = [[] for _ in range(self.dims)]
+        self.endchanges = [[] for _ in range(self.dims)]
+        self.innerchanges = [[] for _ in range(self.dims)]
+        self.negstartchanges = [[] for _ in range(self.dims)]
+        self.negmidchanges = [[] for _ in range(self.dims)]
+        self.negendchanges = [[] for _ in range(self.dims)]
+        self.neginnerchanges = [[] for _ in range(self.dims)]
+     
         #for a unit kernel... (it is scaled later)
-                #A)build list of lengthscales and weights
+        
+        
+        #Build list of lengthscales and weights
         if type(self.k)==GPy.kern.RBF:
-
-            apprx_ls = np.array([1.0]) #the lengthscales of the list of approximating kernels
-            apprx_ws = np.array([[1.0],[1.0]])        
+            self.apprx_ls = np.array([1.0]) #the lengthscales of the list of approximating kernels
+            self.apprx_ws = np.array([[1.0],[1.0]])     
+            
+               
         if type(self.k)==GPy.kern.Exponential:
-            apprx_ls = np.array([1.0]) #the lengthscales of the list of approximating kernels
-            apprx_ws = np.array([[1.1],[0.9]])
-             
-        ###
-        #if not EQ kernel...
-        #
+            self.apprx_ls = np.array([ 0.213704,   0.875284,   2.189295,   4.62008 ,9.212761, 113.691967, 140.42632 , 148.05403 ])  
+            apprx_ws = []
+            apprx_ws.append(np.array([0.06829387, 0.14179143, 0.26536302, 0.11843095, 0.22876908, 0.18288816, 0.00226348]))
+            apprx_ws.append(np.array([ 0.06529387,  0.13729143,  0.25786302,  0.11843095,  0.22876908, 0.18288816, -0.00083652]))
+            self.apprx_ls = np.array([ 0.038469  ,  0.16337993,  0.42350206,  0.91900753,  0.91912203,1.84561768, 17.07884635])
+
+            self.apprx_ws = np.array(apprx_ws)  
         
-        
-        #B)loop over these...
-        for l,w in zip(apprx_ls,apprx_ws.T):
-            print(l,w)
-        
+        #Loop over these...
+        for l,w in zip(apprx_ls,apprx_ws.T):        
             #C)make startchanges etc sum over these...
             for d in range(self.dims):
-                                
+                
                 newWs = np.array([w[0]*self.EQweights,w[1]*self.EQweights])
                 sc,mc,ec,ic,_,_ = getallchanges(self.EQcentres,newWs,self.hypercube_starts,self.hypercube_ends,d,l*self.ls,self.v)
-                self.startchanges[d]+=sc
-                self.midchanges[d]+=mc
-                self.endchanges[d]+=ec
-                self.innerchanges[d]+=ic
+                #print(ic)
+                self.startchanges[d].append(sc)
+                self.midchanges[d].append(mc)
+                self.endchanges[d].append(ec)
+                self.innerchanges[d].append(ic)
                  
                 newWs = np.array([-w[0]*self.EQweights,-w[1]*self.EQweights])
                 sc,mc,ec,ic, _, _ = getallchanges(self.EQcentres,newWs,self.hypercube_starts,self.hypercube_ends,d,l*self.ls,self.v)
-                self.negstartchanges[d]+=sc
-                self.negmidchanges[d]+=mc
-                self.negendchanges[d]+=ec
-                self.neginnerchanges[d]+=ic
-                
+                self.negstartchanges[d].append(sc)
+                self.negmidchanges[d].append(mc)
+                self.negendchanges[d].append(ec)
+                self.neginnerchanges[d].append(ic)
 
     def compute(self,depth,steps = None, availdims=None,availsteps = None, hires=1):
         """
@@ -397,7 +394,7 @@ class AdversBound:
         for c in itertools.product(*steps):
             seqs, seqbs = self.findtop(list(c),depth,availdims,availsteps)
             for seqb, seq in zip(seqbs,seqs):
-                print(">>",seqb,seq)
+                
                 seq.insert(0,[c])
                 idx = bisect.bisect(sequence_bounds,seqb)
                 sequences.insert(idx,seq)
@@ -501,6 +498,8 @@ class AdversBound:
             if not include_start and not include_end:
                 changes = np.sum(midchange[d][idx,:],0)
         b = getbound(self.EQcentres,self.hypercube_starts[idx[0]],self.hypercube_ends[idx[-1]],d,self.ls,self.v,changes,gridres=self.gridres,dimthreshold=self.dimthreshold)
+        print("::::")
+        print(b)
         return b
 
     def findtop(self,c,depth,availdims,availsteps = None):
@@ -675,7 +674,7 @@ class AdversBound:
         return maxchange
     
     def compute_CI(self,CI=0.95):
-        assert False, "NEEDS TO DEPEND ON KERNEL"
+        #assert False, "NEEDS TO DEPEND ON KERNEL"
         outputs = []
         for x in self.EQcentres:
             r = self.EQweights @ zeromean_gaussian(self.EQcentres-x,self.ls,self.v)
@@ -722,11 +721,11 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
     boxstart = [0.0]*dims
     boxend = [1.0]*dims
 
-    print("Xtrain.shape:")
-    print(Xtrain.shape)
+    #print("Xtrain.shape:")
+    #print(Xtrain.shape)
 
     ####TODO THIS ISN'T FAST ENOUGH WHEN WE NEED IT SPARSE
-    if k is None: k = GPy.kern.RBF(dims)
+    #if k is None: k = GPy.kern.RBF(dims)
     m = GPy.models.GPClassification(Xtrain,Ytrain,k)
     m.inference_method = GPy.inference.latent_function_inference.Laplace()
     m.kern.lengthscale.fix(ls)
@@ -749,7 +748,7 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
         abXs = Z
     else:
         print("not sparse...")
-        m = GPy.models.GPClassification(Xtrain,Ytrain)
+        m = GPy.models.GPClassification(Xtrain,Ytrain,k)
         m.inference_method = GPy.inference.latent_function_inference.Laplace()
         m.kern.lengthscale.fix(ls)
         m.kern.variance.constrain_bounded(v,v+1e-4)
@@ -766,7 +765,7 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
     blocks = [[i] for i in range(dims)] 
     print("Starting...")
     results = []
-    print(blocks)
+    #print(blocks)
     for combo in combinations(blocks,depth):
         print(".",end="",flush=True)
         combo_block = []
@@ -775,11 +774,11 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
         for b in combo_block: nsteps[b]=nstep_per_dim
         ab = AdversBound()
         ab.configure(abXs,alpha,ls,sigma,v,boxstart,boxend,nsteps,gridres,k,dimthreshold)
-        print(combo_block)
+        #print(combo_block)
         res = ab.compute(depth,hires=1,availdims=combo_block)
         results.append([res[0]]) ###SAVING SPACE, instead of saving all of res
 #        results.append(res)
-    print("Done")
+    #print("Done")
     if enhance is not None:
         print("Enhancing...")
         new_nstep_per_dim=enhance[0]
@@ -813,7 +812,12 @@ def compute_bounds(Xtrain,Ytrain,Xtest,Ytest,depth, sparse,ls,v,sigma,nstep_per_
             print("%0.4f %0.4f %0.4f" % (np.min(new_bounds),np.mean(new_bounds),np.max(new_bounds)))
 
     accuracy = (np.mean(((m.kern.K(Xtest,abXs)@alpha)>0.5)==(Ytest[:,0]>0)))
-    print("Done.")
-    print("accuracy: %0.2f" % accuracy)
-    return results, m, sparsem, accuracy, ab.compute_CI()
+    #print("Done.")
+    #print("accuracy: %0.2f" % accuracy)
+    
+    sortedresults = np.sort(m.predict_noiseless(Xtrain)[0][:,0])
+    abCI = sortedresults[int(len(Xtrain)*(1-0.95))],sortedresults[int(len(Xtrain)*(1-0.05))]
+
+    debug = {'abXs':abXs,'alpha':alpha}
+    return results, m, sparsem, accuracy, abCI, debug #ab.compute_CI()
     #all_results.append([nstp,np.max([np.max(res[0]) for res in results]),end-start])
