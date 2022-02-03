@@ -287,6 +287,7 @@ class AdversBound:
         self.gridres = gridres
         self.k = k
         self.initialise_hypercube_system(boxstart,boxend,nsteps)
+        #print('EQcentres:',EQcentres,'EQweights:',EQweights)
         
     def initialise_hypercube_system(self,boxstart,boxend,nsteps):
         """
@@ -312,14 +313,14 @@ class AdversBound:
         
         
         #TODO We've switched from Nones to 0s. Hope this is ok...
-        self.startchanges = [[] for _ in range(self.dims)]
-        self.midchanges = [[] for _ in range(self.dims)]
-        self.endchanges = [[] for _ in range(self.dims)]
-        self.innerchanges = [[] for _ in range(self.dims)]
-        self.negstartchanges = [[] for _ in range(self.dims)]
-        self.negmidchanges = [[] for _ in range(self.dims)]
-        self.negendchanges = [[] for _ in range(self.dims)]
-        self.neginnerchanges = [[] for _ in range(self.dims)]
+        #self.startchanges = np.zeros(self.dim [[] for _ in range(self.dims)]
+        #self.midchanges = [[] for _ in range(self.dims)]
+        #self.endchanges = [[] for _ in range(self.dims)]
+        #self.innerchanges = [[] for _ in range(self.dims)]
+        #self.negstartchanges = [[] for _ in range(self.dims)]
+        #self.negmidchanges = [[] for _ in range(self.dims)]
+        #self.negendchanges = [[] for _ in range(self.dims)]
+        #self.neginnerchanges = [[] for _ in range(self.dims)]
      
         #for a unit kernel... (it is scaled later)
         
@@ -339,25 +340,38 @@ class AdversBound:
 
             self.apprx_ws = np.array(apprx_ws)  
         
+        apprx_num = len(self.apprx_ls)
+        
+        def nestedlists(a,b):
+            return [[[] for _ in range(b)] for _ in range(a)]
+        self.startchanges = nestedlists(apprx_num,self.dims)
+        self.midchanges = nestedlists(apprx_num,self.dims)
+        self.endchanges = nestedlists(apprx_num,self.dims)
+        self.innerchanges = nestedlists(apprx_num,self.dims)
+        self.negstartchanges = nestedlists(apprx_num,self.dims)
+        self.negmidchanges = nestedlists(apprx_num,self.dims)
+        self.negendchanges = nestedlists(apprx_num,self.dims)
+        self.neginnerchanges = nestedlists(apprx_num,self.dims)
+        
+        
         #Loop over these...
-        for l,w in zip(apprx_ls,apprx_ws.T):        
-            #C)make startchanges etc sum over these...
+        for i,(l,w) in enumerate(zip(self.apprx_ls,self.apprx_ws.T)):        
             for d in range(self.dims):
                 
                 newWs = np.array([w[0]*self.EQweights,w[1]*self.EQweights])
                 sc,mc,ec,ic,_,_ = getallchanges(self.EQcentres,newWs,self.hypercube_starts,self.hypercube_ends,d,l*self.ls,self.v)
                 #print(ic)
-                self.startchanges[d].append(sc)
-                self.midchanges[d].append(mc)
-                self.endchanges[d].append(ec)
-                self.innerchanges[d].append(ic)
+                self.startchanges[i][d]=sc
+                self.midchanges[i][d]=mc
+                self.endchanges[i][d]=ec
+                self.innerchanges[i][d]=ic
                  
                 newWs = np.array([-w[0]*self.EQweights,-w[1]*self.EQweights])
                 sc,mc,ec,ic, _, _ = getallchanges(self.EQcentres,newWs,self.hypercube_starts,self.hypercube_ends,d,l*self.ls,self.v)
-                self.negstartchanges[d].append(sc)
-                self.negmidchanges[d].append(mc)
-                self.negendchanges[d].append(ec)
-                self.neginnerchanges[d].append(ic)
+                self.negstartchanges[i][d]=sc
+                self.negmidchanges[i][d]=mc
+                self.negendchanges[i][d]=ec
+                self.neginnerchanges[i][d]=ic
 
     def compute(self,depth,steps = None, availdims=None,availsteps = None, hires=1):
         """
@@ -461,45 +475,54 @@ class AdversBound:
           
           TODO: As we consider both directions like this we don't need steps being in both directions cover this?"""
         self.count_compute+=1
-        if positive:
-            innerchange = self.innerchanges
-            startchange = self.startchanges
-            midchange = self.midchanges
-            endchange = self.endchanges
-        else:
-            innerchange = self.neginnerchanges
-            startchange = self.negstartchanges
-            midchange = self.negmidchanges
-            endchange = self.negendchanges
-
-        #pass list of indices
-        #if only one cell exists, we just compute the innerchanges, otherwise we need to add up all the influences
-        idx = np.sort(idx)
-        #print("Hypercube corners")
-        #print(self.hypercube_starts[idx[0]],self.hypercube_ends[idx[-1]])
-        if len(idx)==1:
-            if include_start and include_end:
-                changes = innerchange[d][idx[0],:]
-                #b = getbound(self.EQcentres,self.hypercube_starts[idx[0]],self.hypercube_ends[idx[0]],d,self.ls,self.v,,gridres=self.gridres,dimthreshold=self.dimthreshold)
+        b = 0 
+        for i,(aprx_l,aprx_w) in enumerate(zip(self.apprx_ls,self.apprx_ws.T)):
+            if positive:
+                innerchange = self.innerchanges[i]
+                startchange = self.startchanges[i]
+                midchange = self.midchanges[i]
+                endchange = self.endchanges[i]
             else:
+                innerchange = self.neginnerchanges[i]
+                startchange = self.negstartchanges[i]
+                midchange = self.negmidchanges[i]
+                endchange = self.negendchanges[i]
+
+            #pass list of indices
+            #if only one cell exists, we just compute the innerchanges, otherwise we need to add up all the influences
+            idx = np.sort(idx)
+            #print("Hypercube corners")
+            #print(self.hypercube_starts[idx[0]],self.hypercube_ends[idx[-1]])
+            if len(idx)==1:
+                if include_start and include_end:
+                    changes = innerchange[d][idx[0],:]                
+                else:
+                    if not include_start:
+                        changes = endchange[d][idx[0],:]
+                    if not include_end:
+                        changes = startchange[d][idx[0],:]
+                    if not include_start and not include_end:
+                        changes = midchange[d][idx[0],:]
+            else:
+                if include_start and include_end:
+                    changes = startchange[d][idx[0],:] + np.sum(midchange[d][idx[1:-1],:],0) + endchange[d][idx[-1],:]
                 if not include_start:
-                    changes = endchange[d][idx[0],:]
+                    changes = np.sum(midchange[d][idx[0:-1],:],0) + endchange[d][idx[-1],:]
                 if not include_end:
-                    changes = startchange[d][idx[0],:]
+                    changes = startchange[d][idx[0],:] + np.sum(midchange[d][idx[1:],:],0)
                 if not include_start and not include_end:
-                    changes = midchange[d][idx[0],:]
-        else: #if len(idx)>1:
-            if include_start and include_end:
-                changes = startchange[d][idx[0],:] + np.sum(midchange[d][idx[1:-1],:],0) + endchange[d][idx[-1],:]
-            if not include_start:
-                changes = np.sum(midchange[d][idx[0:-1],:],0) + endchange[d][idx[-1],:]
-            if not include_end:
-                changes = startchange[d][idx[0],:] + np.sum(midchange[d][idx[1:],:],0)
-            if not include_start and not include_end:
-                changes = np.sum(midchange[d][idx,:],0)
-        b = getbound(self.EQcentres,self.hypercube_starts[idx[0]],self.hypercube_ends[idx[-1]],d,self.ls,self.v,changes,gridres=self.gridres,dimthreshold=self.dimthreshold)
-        print("::::")
-        print(b)
+                    changes = np.sum(midchange[d][idx,:],0)
+                    
+            centres = self.EQcentres
+            cstart = self.hypercube_starts[idx[0]]
+            cend = self.hypercube_ends[idx[-1]]
+            w = aprx_w*self.v
+            l = aprx_l*self.ls
+            b_for_comp=getbound(centres,cstart,cend,d,l,w,changes,gridres=self.gridres,dimthreshold=self.dimthreshold)                    
+            #print('cstart/end:',cstart,cend,'changes:',changes,'idx,d:',idx,d,'apprx l&w:',aprx_l,aprx_w,'l&w:',l,w,'b:',b_for_comp)
+            b = b + b_for_comp
+        #print("::::")            
+        #print(b)
         return b
 
     def findtop(self,c,depth,availdims,availsteps = None):
